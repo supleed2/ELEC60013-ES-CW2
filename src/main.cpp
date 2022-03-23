@@ -3,17 +3,22 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include <STM32FreeRTOS.h>
+#include "knob.h"
 
 volatile int32_t currentStepSize;
 volatile uint8_t keyArray[7];
 SemaphoreHandle_t keyArrayMutex;
+Knob K1(0,6);
+Knob K3(0,10);
+enum wave{SQR=0,SAW,TRI,SIN};
+
 
 #pragma region Config Values
 const uint32_t interval = 10;		 // Display update interval
 const uint8_t octave = 4;			 // Octave to start on
 const uint32_t samplingRate = 44100; // Sampling rate
-const int32_t stepSizes[] = {0,
-	6370029, 6748811, 7150116, 7575284, 8025734, 8502969, 9008582,
+const int32_t stepSizes[] = {
+	0, 6370029, 6748811, 7150116, 7575284, 8025734, 8502969, 9008582,
 	9544260, 10111791, 10713070, 11350102, 12025014, 12740059, 13497622,
 	14300233, 15150569, 16051469, 17005939, 18017164, 19088521, 20223583,
 	21426140, 22700205, 24050029, 25480118, 26995245, 28600466, 30301138,
@@ -22,6 +27,30 @@ const int32_t stepSizes[] = {0,
 	72068659, 76354085, 80894335, 85704562, 90800821, 96200119, 101920475,
 	107980982, 114401866, 121204555, 12841175, 136047513, 144137319, 152708170,
 	161788670, 171409125, 181601642, 192400238}; // Step sizes for each note
+static unsigned char waveforms[4][18] = {
+	{0x7f, 0x10, 0x41, 0x10, 0x41, 0x10, 0x41, 0x10, 0x41, 0x10, 0x41, 0x10,
+	0x41, 0x10, 0x41, 0x10, 0xc1, 0x1f}, //square wave
+	{0x70, 0x10, 0x58, 0x18, 0x48, 0x08, 0x4c, 0x0c, 0x44, 0x04, 0x46, 0x06,
+   	0x42, 0x02, 0x43, 0x03, 0xc1, 0x01}, //sawtooth wave
+	{0x08, 0x00, 0x1c, 0x00, 0x36, 0x00, 0x63, 0x00, 0xc1, 0x00, 0x80, 0x11,
+	0x00, 0x1b, 0x00, 0x0e, 0x00, 0x04}, //triange wave
+	{0x1c, 0x00, 0x36, 0x00, 0x22, 0x00, 0x63, 0x00, 0x41, 0x10, 0xc0, 0x18,
+   	0x80, 0x08, 0x80, 0x0d, 0x00, 0x07} //sine wave
+};
+static unsigned char volumes[6][18] = {
+	{0x10, 0x02, 0x98, 0x04, 0x1c, 0x05, 0x5f, 0x09, 0x5f, 0x09, 0x5f, 0x09,
+   	0x1c, 0x05, 0x98, 0x04, 0x10, 0x02 }, //volume max
+	{0x10, 0x00, 0x98, 0x00, 0x1c, 0x01, 0x5f, 0x01, 0x5f, 0x01, 0x5f, 0x01,
+   	0x1c, 0x01, 0x98, 0x00, 0x10, 0x00 }, //volume mid higher
+	{0x10, 0x00, 0x18, 0x00, 0x1c, 0x01, 0x5f, 0x01, 0x5f, 0x01, 0x5f, 0x01,
+   	0x1c, 0x01, 0x18, 0x00, 0x10, 0x00 }, //volume mid lower
+	{0x10, 0x00, 0x18, 0x00, 0x1c, 0x00, 0x5f, 0x00, 0x5f, 0x00, 0x5f, 0x00,
+   	0x1c, 0x00, 0x18, 0x00, 0x10, 0x00 }, //volume low
+	{0x10, 0x00, 0x18, 0x00, 0x1c, 0x00, 0x1f, 0x00, 0x5f, 0x00, 0x1f, 0x00,
+   	0x1c, 0x00, 0x18, 0x00, 0x10, 0x00 }, //volume lowest
+	{0x10, 0x00, 0x18, 0x00, 0x5c, 0x04, 0x9f, 0x02, 0x1f, 0x01, 0x9f, 0x02,
+   	0x5c, 0x04, 0x18, 0x00, 0x10, 0x00} //mute
+};
 #pragma endregion
 #pragma region Pin Definitions
 // Row select and enable
@@ -106,9 +135,6 @@ void scanKeysTask(void * pvParameters){
 	TickType_t xLastWakeTime = xTaskGetTickCount();
 	while(1){
 		vTaskDelayUntil(&xLastWakeTime, xFrequency);
-		xSemaphoreTake(keyArrayMutex, portMAX_DELAY);
-		memcpy(keyArrayCopy, (void*)keyArray, 7);
-		xSemaphoreGive(keyArrayMutex);
 		for (uint8_t i = 0; i < 7; i++) {
 			setRow(i);
 			delayMicroseconds(3);
@@ -117,7 +143,10 @@ void scanKeysTask(void * pvParameters){
 		xSemaphoreTake(keyArrayMutex, portMAX_DELAY);
 		memcpy((void*)keyArray, keyArrayCopy, 7);
 		xSemaphoreGive(keyArrayMutex);
+		digitalToggle(LED_BUILTIN);
 		__atomic_store_n(&currentStepSize, stepSizes[getTopKey(keyArrayCopy)], __ATOMIC_RELAXED);
+		K1.updateRotation(keyArrayCopy[4] & 0x1, keyArrayCopy[4] & 0x2);
+		K3.updateRotation(keyArrayCopy[3] & 0x1, keyArrayCopy[3] & 0x2);
 	}
 }
 
@@ -136,14 +165,42 @@ void displayUpdateTask(void * pvParameters){
 		u8g2.setFont(u8g2_font_profont12_mf);		// choose a suitable font
 		u8g2.setCursor(2, 10);						// set the cursor position
 		u8g2.print(currentStepSize); // Print the current frequency
-		digitalToggle(LED_BUILTIN);
+		//digitalToggle(LED_BUILTIN);
 		u8g2.setCursor(2, 20);
 		for (uint8_t i = 0; i < 7; i++) {
 			u8g2.print(keyArrayCopy[6-i], HEX);
 		}
-		u8g2.drawStr(120,30,"+");
-		u8g2.drawStr(85,30,"-");
-		//u8g2.drawStr(100,30,"hi");
+		// Print waveform icon
+		int K1_rot = K1.getRotation();
+		if(K1_rot<2){
+			u8g2.drawXBM(38,22,13,9,waveforms[SQR]);
+		}else if(K1_rot<4){
+			u8g2.drawXBM(38,22,13,9,waveforms[SAW]);
+		}else if(K1_rot<6){
+			u8g2.drawXBM(38,22,13,9,waveforms[TRI]);
+		}else if(K1_rot==6){
+			u8g2.drawXBM(38,22,13,9,waveforms[SIN]);
+		};
+		u8g2.setCursor(2, 30);
+		u8g2.print("O:");
+		u8g2.setCursor(14, 30);
+		u8g2.print(octave);
+
+		// Print volume indicator and bar
+		int K3_rot = K3.getRotation();
+		if(K3_rot==0){
+			u8g2.drawXBM(116,22,13,9,volumes[5]);
+		}else if(K3_rot<3){
+			u8g2.drawXBM(116,22,13,9,volumes[4]);
+		}else if(K3_rot<5){
+			u8g2.drawXBM(116,22,13,9,volumes[3]);
+		}else if(K3_rot<7){
+			u8g2.drawXBM(116,22,13,9,volumes[2]);
+		}else if(K3_rot<9){
+			u8g2.drawXBM(116,22,13,9,volumes[1]);
+		}else if(K3_rot<11){
+			u8g2.drawXBM(116,22,13,9,volumes[0]);
+		};
 		u8g2.sendBuffer(); // transfer internal memory to the display
 	}
 }
