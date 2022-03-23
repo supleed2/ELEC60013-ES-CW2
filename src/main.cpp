@@ -3,8 +3,24 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 
+volatile int32_t currentStepSize;
+volatile uint8_t keyArray[7];
+volatile uint8_t *keyArrayPtr = keyArray;
+
 #pragma region Config Values
-const uint32_t interval = 10; // Display update interval
+const uint32_t interval = 10;		 // Display update interval
+const uint8_t octave = 4;			 // Octave to start on
+const uint32_t samplingRate = 44100; // Sampling rate
+const int32_t stepSizes[] = {0,
+	6370029, 6748811, 7150116, 7575284, 8025734, 8502969, 9008582,
+	9544260, 10111791, 10713070, 11350102, 12025014, 12740059, 13497622,
+	14300233, 15150569, 16051469, 17005939, 18017164, 19088521, 20223583,
+	21426140, 22700205, 24050029, 25480118, 26995245, 28600466, 30301138,
+	32102938, 34011878, 36034329, 38177042, 40447167, 42852281, 45400410,
+	48100059, 50960237, 53990491, 57200933, 60602277, 64205876, 68023756,
+	72068659, 76354085, 80894335, 85704562, 90800821, 96200119, 101920475,
+	107980982, 114401866, 121204555, 12841175, 136047513, 144137319, 152708170,
+	161788670, 171409125, 181601642, 192400238}; // Step sizes for each note
 #pragma endregion
 
 #pragma region Pin Definitions
@@ -46,25 +62,6 @@ void setOutMuxBit(const uint8_t bitIdx, const bool value) {
 	digitalWrite(REN_PIN, LOW);
 }
 
-// Function to read keys from key matrix
-uint32_t readKeys() {
-	uint32_t keys = 0;
-	for (uint8_t i = 0; i < 3; i++) {
-		digitalWrite(REN_PIN, LOW);
-		digitalWrite(RA0_PIN, i & 0x01);
-		digitalWrite(RA1_PIN, i & 0x02);
-		digitalWrite(RA2_PIN, i & 0x04);
-		digitalWrite(REN_PIN, HIGH);
-		delayMicroseconds(5);
-		keys |= !digitalRead(C0_PIN) << (i * 4);
-		keys |= !digitalRead(C1_PIN) << (i * 4 + 1);
-		keys |= !digitalRead(C2_PIN) << (i * 4 + 2);
-		keys |= !digitalRead(C3_PIN) << (i * 4 + 3);
-	}
-	digitalWrite(REN_PIN, LOW);
-	return keys;
-}
-
 // Read key values in currently set row
 uint8_t readCols() {
 	uint8_t row = 0;
@@ -82,6 +79,35 @@ void setRow(const uint8_t rowIdx) {
 	digitalWrite(RA1_PIN, rowIdx & 0x02);
 	digitalWrite(RA2_PIN, rowIdx & 0x04);
 	digitalWrite(REN_PIN, HIGH);
+}
+
+uint16_t getTopKey(volatile uint8_t array[]) {
+	uint16_t topKey = 0;
+	for (uint8_t i = 0; i < 3; i++) {
+		for (uint8_t j = 0; j < 4; j++) {
+			if (array[i] & (0x1 << j)) {
+				topKey = (octave - 2) * 12 + i * 4 + j + 1;
+			}
+		}
+	}
+	Serial.println(topKey);
+	return topKey;
+}
+
+void sampleISR(){
+	static int32_t phaseAcc = 0;
+	phaseAcc += currentStepSize;
+	int32_t Vout = phaseAcc >> 24;
+	analogWrite(OUTR_PIN, Vout + 128);
+}
+
+void scanKeysTask(void * pvParameters){
+	for (uint8_t i = 0; i < 3; i++) {
+		setRow(i);
+		delayMicroseconds(3);
+		keyArray[i] = readCols();
+	}
+	__atomic_store_n(&currentStepSize, stepSizes[getTopKey(keyArray)], __ATOMIC_RELAXED);
 }
 
 void setup() {
@@ -112,16 +138,16 @@ void setup() {
 	// Initialise UART
 	Serial.begin(115200);
 	Serial.println("Hello World");
+
+	TIM_TypeDef *Instance = TIM1;
+	HardwareTimer *sampleTimer = new HardwareTimer(Instance);
+	sampleTimer->setOverflow(samplingRate, HERTZ_FORMAT);
+	sampleTimer->attachInterrupt(sampleISR);
+	sampleTimer->resume();
 }
 
 void loop() {
 	static uint32_t next = millis();
-	static uint8_t keyArray[7];
-	for (uint8_t i = 0; i < 3; i++) {
-		setRow(i);
-		delayMicroseconds(3);
-		keyArray[i] = readCols();
-	}
 	for (uint8_t i = 3; i < 7; i++) {
 		setRow(i);
 		delayMicroseconds(3);
@@ -130,9 +156,11 @@ void loop() {
 
 	if (millis() > next) {
 		next += interval;
-		u8g2.clearBuffer();					  // clear the internal memory
-		u8g2.setFont(u8g2_font_profont12_mf); // choose a suitable font
-		u8g2.drawStr(2, 10, "Hello World!");  // write something to the internal memory
+		u8g2.clearBuffer();							// clear the internal memory
+		u8g2.setFont(u8g2_font_profont12_mf);		// choose a suitable font
+		u8g2.setCursor(2, 10);						// set the cursor position
+		scanKeysTask(NULL);
+		u8g2.print(currentStepSize); // Print the current frequency
 		digitalToggle(LED_BUILTIN);
 		u8g2.setCursor(2, 20);
 		for (uint8_t i = 0; i < 7; i++) {
