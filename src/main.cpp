@@ -7,6 +7,7 @@
 
 volatile int32_t currentStepSize;
 volatile uint8_t keyArray[7];
+volatile int8_t volume;
 SemaphoreHandle_t keyArrayMutex;
 Knob K1(0,6);
 Knob K3(0,10);
@@ -17,6 +18,7 @@ enum wave{SQR=0,SAW,TRI,SIN};
 const uint32_t interval = 10;		 // Display update interval
 const uint8_t octave = 4;			 // Octave to start on
 const uint32_t samplingRate = 44100; // Sampling rate
+const int8_t volumeMax = 10;
 const int32_t stepSizes[] = {
 	0, 6370029, 6748811, 7150116, 7575284, 8025734, 8502969, 9008582,
 	9544260, 10111791, 10713070, 11350102, 12025014, 12740059, 13497622,
@@ -125,7 +127,8 @@ uint16_t getTopKey(volatile uint8_t array[]) {
 void sampleISR(){
 	static int32_t phaseAcc = 0;
 	phaseAcc += currentStepSize;
-	int32_t Vout = phaseAcc >> 24;
+	int32_t Vout = (phaseAcc >> 16)*25*volume;
+	Vout = Vout >> 16;
 	analogWrite(OUTR_PIN, Vout + 128);
 }
 
@@ -147,6 +150,7 @@ void scanKeysTask(void * pvParameters){
 		__atomic_store_n(&currentStepSize, stepSizes[getTopKey(keyArrayCopy)], __ATOMIC_RELAXED);
 		K1.updateRotation(keyArrayCopy[4] & 0x1, keyArrayCopy[4] & 0x2);
 		K3.updateRotation(keyArrayCopy[3] & 0x1, keyArrayCopy[3] & 0x2);
+		__atomic_store_n(&volume, K3.getRotation(), __ATOMIC_RELAXED);
 	}
 }
 
@@ -181,6 +185,8 @@ void displayUpdateTask(void * pvParameters){
 		}else if(K1_rot==6){
 			u8g2.drawXBM(38,22,13,9,waveforms[SIN]);
 		};
+
+		// Print octave number
 		u8g2.setCursor(2, 30);
 		u8g2.print("O:");
 		u8g2.setCursor(14, 30);
