@@ -10,6 +10,7 @@ private:
 
 public:
     Knob(int minimum, int max);
+    Knob(int minimum, int max, int initialRotation);
 
     int getRotation();
 

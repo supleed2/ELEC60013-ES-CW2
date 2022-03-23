@@ -10,19 +10,22 @@ volatile uint8_t keyArray[7];
 volatile int8_t volume;
 volatile bool volumeFiner;
 volatile int8_t wave;
+volatile int8_t octave = 4;
 int8_t volumeHistory = 0;
 SemaphoreHandle_t keyArrayMutex;
-Knob K1(0,6);
-Knob K3(0,10);
+Knob K0(2,14,8); 	//Octave encoder
+Knob K1(0,6); 		//Waveform encoder
+Knob K3(0,10);		//Volume encoder
 enum waves{SQUARE=0,SAWTOOTH,TRIANGLE,SINE};
 
 
 #pragma region Config Values
 const uint32_t interval = 10;		 // Display update interval
-const uint8_t octave = 4;			 // Octave to start on
 const uint32_t samplingRate = 44100; // Sampling rate
 const int32_t stepSizes[] = {
-	0, 6370029, 6748811, 7150116, 7575284, 8025734, 8502969, 9008582,
+	0, 3374406, 3575058, 3787642, 4012867, 4251485, 4504291, 4772130,
+	5055896, 5356535, 5675051, 6012507,
+	6370029, 6748811, 7150116, 7575284, 8025734, 8502969, 9008582,
 	9544260, 10111791, 10713070, 11350102, 12025014, 12740059, 13497622,
 	14300233, 15150569, 16051469, 17005939, 18017164, 19088521, 20223583,
 	21426140, 22700205, 24050029, 25480118, 26995245, 28600466, 30301138,
@@ -30,7 +33,9 @@ const int32_t stepSizes[] = {
 	48100059, 50960237, 53990491, 57200933, 60602277, 64205876, 68023756,
 	72068659, 76354085, 80894335, 85704562, 90800821, 96200119, 101920475,
 	107980982, 114401866, 121204555, 12841175, 136047513, 144137319, 152708170,
-	161788670, 171409125, 181601642, 192400238}; // Step sizes for each note
+	161788670, 171409125, 181601642, 192400238, 203840952, 215961966,
+	228803732, 242409110, 256823506, 272095026, 288274639, 305416341, 323577341, 
+	342818251, 363203285, 384800477, 407681904}; // Step sizes for each note
 static unsigned char waveforms[4][18] = {
 	{0x7f, 0x10, 0x41, 0x10, 0x41, 0x10, 0x41, 0x10, 0x41, 0x10, 0x41, 0x10,
 	0x41, 0x10, 0x41, 0x10, 0xc1, 0x1f}, //square wave
@@ -114,12 +119,24 @@ void setRow(const uint8_t rowIdx) {
 	digitalWrite(REN_PIN, HIGH);
 }
 
+uint32_t scaleVolume(uint32_t Vout){
+	uint32_t newVout = 0;
+	if(volumeFiner){
+		newVout = (Vout*12*volume) >> 16;
+	}else{ // 25 = floor( (1/10) << 8 )
+		newVout = (Vout*25*volume) >> 16; 	//scale by 2*8 cuz 16-bit*8-bit=24-bit -> scale by 16 to get to 8
+	}
+	return newVout;
+}
+
+//uint32_t combineNotes(uint32_t lol){}
+
 uint16_t getTopKey(volatile uint8_t array[]) {
 	uint16_t topKey = 0;
 	for (uint8_t i = 0; i < 3; i++) {
 		for (uint8_t j = 0; j < 4; j++) {
 			if (array[i] & (0x1 << j)) {
-				topKey = (octave - 2) * 12 + i * 4 + j + 1;
+				topKey = (octave-1) * 12 + i * 4 + j + 1;
 			}
 		}
 	}
@@ -138,12 +155,12 @@ void sampleISR(){
 		}else{
 			Vout = 0;
 		}
+	}else if(wave==TRIANGLE){
+		//TODO
+	}else if(wave==SINE){
+		//TODO
 	}
-	if(volumeFiner){
-		Vout = (Vout*12*volume) >> 16;
-	}else{ // 25 = floor( (1/10) << 8 )
-		Vout = (Vout*25*volume) >> 16; 	//scale by 2*8 cuz 16-bit*8-bit=24-bit -> scale by 16 to get to 8
-	}
+	Vout = scaleVolume(Vout);
 	analogWrite(OUTR_PIN, Vout + 128);
 }
 
@@ -164,6 +181,8 @@ void scanKeysTask(void * pvParameters){
 		xSemaphoreGive(keyArrayMutex);
 		digitalToggle(LED_BUILTIN);
 		__atomic_store_n(&currentStepSize, stepSizes[getTopKey(keyArrayCopy)], __ATOMIC_RELAXED);
+		K0.updateRotation(keyArrayCopy[4] & 0x4, keyArrayCopy[4] & 0x8);
+		__atomic_store_n(&octave, K0.getRotation()/2, __ATOMIC_RELAXED);
 		K1.updateRotation(keyArrayCopy[4] & 0x1, keyArrayCopy[4] & 0x2);
 		__atomic_store_n(&wave, K1.getRotation()/2, __ATOMIC_RELAXED);
 		if(volumeFiner){

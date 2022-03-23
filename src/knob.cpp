@@ -10,6 +10,16 @@ Knob::Knob(int minimum, int maximum) {
     Knob::rotation = 0;
 }
 
+Knob::Knob(int minimum, int maximum, int initialRotation) {
+    Knob::minimum = minimum;
+    Knob::maximum = maximum;
+    Knob::A = false;
+    Knob::B = false;
+    Knob::rotPlusOnePrev = false;
+    Knob::rotMinOnePrev = false;
+    Knob::rotation = initialRotation;
+}
+
 int Knob::getRotation() { 
     return Knob::rotation; 
 };
