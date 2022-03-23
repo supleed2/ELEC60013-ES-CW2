@@ -222,7 +222,7 @@ void displayUpdateTask(void * pvParameters){
 				u8g2.drawXBM(116,22,13,9,volumes[0]);
 			};
 		}else{
-			u8g2.setCursor(122, 30);
+			u8g2.setCursor(117, 30);
 			u8g2.print(volume/2);
 		};
 		u8g2.sendBuffer(); // transfer internal memory to the display
