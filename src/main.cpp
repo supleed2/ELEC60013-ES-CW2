@@ -2,6 +2,7 @@
 #include <STM32FreeRTOS.h>
 #include <U8g2lib.h>
 #include <atomic>
+#include <knob>
 #include <string>
 
 volatile std::atomic<int32_t> currentStepSize;
@@ -48,6 +49,7 @@ const int HKOE_BIT = 6;
 #pragma endregion
 
 U8G2_SSD1305_128X32_NONAME_F_HW_I2C u8g2(U8G2_R0); // Display driver object
+Knob K3 = Knob(0, 16);							   // Knob driver object
 
 // Function to set outputs using key matrix
 void setOutMuxBit(const uint8_t bitIdx, const bool value) {
@@ -95,7 +97,7 @@ uint16_t getTopKey() {
 void sampleISR() {
 	static int32_t phaseAcc = 0;
 	phaseAcc += currentStepSize;
-	int32_t Vout = phaseAcc >> 24;
+	int32_t Vout = phaseAcc >> (32 - K3.getRotation() / 2);
 	analogWrite(OUTR_PIN, Vout + 128);
 }
 
@@ -104,12 +106,13 @@ void scanKeysTask(void *pvParameters) {
 	TickType_t xLastWakeTime = xTaskGetTickCount();
 	while (1) {
 		vTaskDelayUntil(&xLastWakeTime, xFrequency);
-		for (uint8_t i = 0; i < 3; i++) {
+		for (uint8_t i = 0; i < 7; i++) {
 			setRow(i);
 			delayMicroseconds(3);
 			keyArray[i] = readCols();
 		}
 		currentStepSize = notes[getTopKey()].stepSize; // Atomic Store
+		K3.updateRotation(keyArray[3] & 0x1, keyArray[3] & 0x2);
 	}
 }
 
@@ -127,6 +130,8 @@ void displayUpdateTask(void *pvParameters) {
 			u8g2.print(keyArray[i], HEX);
 		}
 		u8g2.drawXBM(118, 0, 10, 10, icon_bits);
+		u8g2.setCursor(2, 30);
+		u8g2.print(K3.getRotation());
 		u8g2.sendBuffer(); // transfer internal memory to the display
 	}
 }
