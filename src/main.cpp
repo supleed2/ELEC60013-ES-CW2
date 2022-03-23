@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <U8g2lib.h>
+#include <STM32FreeRTOS.h>
 
 volatile int32_t currentStepSize;
 volatile uint8_t keyArray[7];
@@ -90,7 +91,6 @@ uint16_t getTopKey(volatile uint8_t array[]) {
 			}
 		}
 	}
-	Serial.println(topKey);
 	return topKey;
 }
 
@@ -102,12 +102,40 @@ void sampleISR(){
 }
 
 void scanKeysTask(void * pvParameters){
-	for (uint8_t i = 0; i < 3; i++) {
+	const TickType_t xFrequency = 50/portTICK_PERIOD_MS;
+	TickType_t xLastWakeTime = xTaskGetTickCount();
+	while(1){
+		vTaskDelayUntil(&xLastWakeTime, xFrequency);
+		for (uint8_t i = 0; i < 3; i++) {
+			setRow(i);
+			delayMicroseconds(3);
+			keyArray[i] = readCols();
+		}
+		for (uint8_t i = 3; i < 7; i++) {
 		setRow(i);
 		delayMicroseconds(3);
 		keyArray[i] = readCols();
 	}
-	__atomic_store_n(&currentStepSize, stepSizes[getTopKey(keyArray)], __ATOMIC_RELAXED);
+		__atomic_store_n(&currentStepSize, stepSizes[getTopKey(keyArray)], __ATOMIC_RELAXED);
+	}
+}
+
+void displayUpdateTask(void * pvParameters){
+	const TickType_t xFrequency = 100/portTICK_PERIOD_MS;
+	TickType_t xLastWakeTime = xTaskGetTickCount();
+	while(1){
+		vTaskDelayUntil(&xLastWakeTime, xFrequency);
+		u8g2.clearBuffer();							// clear the internal memory
+		u8g2.setFont(u8g2_font_profont12_mf);		// choose a suitable font
+		u8g2.setCursor(2, 10);						// set the cursor position
+		u8g2.print(currentStepSize); // Print the current frequency
+		digitalToggle(LED_BUILTIN);
+		u8g2.setCursor(2, 20);
+		for (uint8_t i = 0; i < 7; i++) {
+			u8g2.print(keyArray[i], HEX);
+		}
+		u8g2.sendBuffer(); // transfer internal memory to the display
+	}
 }
 
 void setup() {
@@ -144,28 +172,26 @@ void setup() {
 	sampleTimer->setOverflow(samplingRate, HERTZ_FORMAT);
 	sampleTimer->attachInterrupt(sampleISR);
 	sampleTimer->resume();
+
+	TaskHandle_t scanKeysHandle = NULL;
+	TaskHandle_t displayUpdateHandle = NULL;
+	xTaskCreate(
+		scanKeysTask, /* Function that implements the task */
+		"scanKeys", /* Text name for the task */
+		64, /* Stack size in words, not bytes */
+		NULL, /* Parameter passed into the task */
+		2, /* Task priority */
+		&scanKeysHandle /* Pointer to store the task handle */
+	);
+	xTaskCreate(
+		displayUpdateTask, /* Function that implements the task */
+		"displayUpdate", /* Text name for the task */
+		256, /* Stack size in words, not bytes */
+		NULL, /* Parameter passed into the task */
+		1, /* Task priority */
+		&displayUpdateHandle /* Pointer to store the task handle */
+	);
+	vTaskStartScheduler();
 }
 
-void loop() {
-	static uint32_t next = millis();
-	for (uint8_t i = 3; i < 7; i++) {
-		setRow(i);
-		delayMicroseconds(3);
-		keyArray[i] = readCols();
-	}
-
-	if (millis() > next) {
-		next += interval;
-		u8g2.clearBuffer();							// clear the internal memory
-		u8g2.setFont(u8g2_font_profont12_mf);		// choose a suitable font
-		u8g2.setCursor(2, 10);						// set the cursor position
-		scanKeysTask(NULL);
-		u8g2.print(currentStepSize); // Print the current frequency
-		digitalToggle(LED_BUILTIN);
-		u8g2.setCursor(2, 20);
-		for (uint8_t i = 0; i < 7; i++) {
-			u8g2.print(keyArray[i], HEX);
-		}
-		u8g2.sendBuffer(); // transfer internal memory to the display
-	}
-}
+void loop() {}
