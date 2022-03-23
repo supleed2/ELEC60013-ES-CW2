@@ -9,11 +9,12 @@ volatile int32_t currentStepSize;
 volatile uint8_t keyArray[7];
 volatile int8_t volume;
 volatile bool volumeFiner;
+volatile int8_t wave;
 int8_t volumeHistory = 0;
 SemaphoreHandle_t keyArrayMutex;
 Knob K1(0,6);
 Knob K3(0,10);
-enum wave{SQR=0,SAW,TRI,SIN};
+enum waves{SQUARE=0,SAWTOOTH,TRIANGLE,SINE};
 
 
 #pragma region Config Values
@@ -128,7 +129,16 @@ uint16_t getTopKey(volatile uint8_t array[]) {
 void sampleISR(){
 	static int32_t phaseAcc = 0;
 	phaseAcc += currentStepSize;
-	int32_t Vout = phaseAcc >> 16; 
+	int32_t Vout = 0;
+	if(wave==SAWTOOTH){
+		Vout = phaseAcc >> 16; 
+	}else if(wave==SQUARE){
+		if(phaseAcc<0){
+			Vout = 0x8000;
+		}else{
+			Vout = 0;
+		}
+	}
 	if(volumeFiner){
 		Vout = (Vout*12*volume) >> 16;
 	}else{ // 25 = floor( (1/10) << 8 )
@@ -155,6 +165,7 @@ void scanKeysTask(void * pvParameters){
 		digitalToggle(LED_BUILTIN);
 		__atomic_store_n(&currentStepSize, stepSizes[getTopKey(keyArrayCopy)], __ATOMIC_RELAXED);
 		K1.updateRotation(keyArrayCopy[4] & 0x1, keyArrayCopy[4] & 0x2);
+		__atomic_store_n(&wave, K1.getRotation()/2, __ATOMIC_RELAXED);
 		if(volumeFiner){
 			K3.changeLimitsVolume(0,20);
 		}else{
@@ -191,13 +202,13 @@ void displayUpdateTask(void * pvParameters){
 		// Print waveform icon
 		int K1_rot = K1.getRotation();
 		if(K1_rot<2){
-			u8g2.drawXBM(38,22,13,9,waveforms[SQR]);
+			u8g2.drawXBM(38,22,13,9,waveforms[SQUARE]);
 		}else if(K1_rot<4){
-			u8g2.drawXBM(38,22,13,9,waveforms[SAW]);
+			u8g2.drawXBM(38,22,13,9,waveforms[SAWTOOTH]);
 		}else if(K1_rot<6){
-			u8g2.drawXBM(38,22,13,9,waveforms[TRI]);
+			u8g2.drawXBM(38,22,13,9,waveforms[TRIANGLE]);
 		}else if(K1_rot==6){
-			u8g2.drawXBM(38,22,13,9,waveforms[SIN]);
+			u8g2.drawXBM(38,22,13,9,waveforms[SINE]);
 		};
 
 		// Print octave number
