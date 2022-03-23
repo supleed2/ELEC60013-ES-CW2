@@ -6,7 +6,7 @@
 
 volatile int32_t currentStepSize;
 volatile uint8_t keyArray[7];
-volatile uint8_t *keyArrayPtr = keyArray;
+SemaphoreHandle_t keyArrayMutex;
 
 #pragma region Config Values
 const uint32_t interval = 10;		 // Display update interval
@@ -23,7 +23,6 @@ const int32_t stepSizes[] = {0,
 	107980982, 114401866, 121204555, 12841175, 136047513, 144137319, 152708170,
 	161788670, 171409125, 181601642, 192400238}; // Step sizes for each note
 #pragma endregion
-
 #pragma region Pin Definitions
 // Row select and enable
 const int RA0_PIN = D3;
@@ -102,21 +101,23 @@ void sampleISR(){
 }
 
 void scanKeysTask(void * pvParameters){
+	uint8_t keyArrayCopy[7];
 	const TickType_t xFrequency = 50/portTICK_PERIOD_MS;
 	TickType_t xLastWakeTime = xTaskGetTickCount();
 	while(1){
 		vTaskDelayUntil(&xLastWakeTime, xFrequency);
-		for (uint8_t i = 0; i < 3; i++) {
+		xSemaphoreTake(keyArrayMutex, portMAX_DELAY);
+		memcpy(keyArrayCopy, (void*)keyArray, 7);
+		xSemaphoreGive(keyArrayMutex);
+		for (uint8_t i = 0; i < 7; i++) {
 			setRow(i);
 			delayMicroseconds(3);
-			keyArray[i] = readCols();
+			keyArrayCopy[i] = readCols();
 		}
-		for (uint8_t i = 3; i < 7; i++) {
-		setRow(i);
-		delayMicroseconds(3);
-		keyArray[i] = readCols();
-	}
-		__atomic_store_n(&currentStepSize, stepSizes[getTopKey(keyArray)], __ATOMIC_RELAXED);
+		xSemaphoreTake(keyArrayMutex, portMAX_DELAY);
+		memcpy((void*)keyArray, keyArrayCopy, 7);
+		xSemaphoreGive(keyArrayMutex);
+		__atomic_store_n(&currentStepSize, stepSizes[getTopKey(keyArrayCopy)], __ATOMIC_RELAXED);
 	}
 }
 
@@ -191,6 +192,9 @@ void setup() {
 		1, /* Task priority */
 		&displayUpdateHandle /* Pointer to store the task handle */
 	);
+
+	keyArrayMutex = xSemaphoreCreateMutex();
+
 	vTaskStartScheduler();
 }
 
