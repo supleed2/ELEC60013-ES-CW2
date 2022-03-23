@@ -8,6 +8,8 @@
 volatile int32_t currentStepSize;
 volatile uint8_t keyArray[7];
 volatile int8_t volume;
+volatile bool volumeFiner;
+int8_t volumeHistory = 0;
 SemaphoreHandle_t keyArrayMutex;
 Knob K1(0,6);
 Knob K3(0,10);
@@ -18,7 +20,6 @@ enum wave{SQR=0,SAW,TRI,SIN};
 const uint32_t interval = 10;		 // Display update interval
 const uint8_t octave = 4;			 // Octave to start on
 const uint32_t samplingRate = 44100; // Sampling rate
-const int8_t volumeMax = 10;
 const int32_t stepSizes[] = {
 	0, 6370029, 6748811, 7150116, 7575284, 8025734, 8502969, 9008582,
 	9544260, 10111791, 10713070, 11350102, 12025014, 12740059, 13497622,
@@ -127,13 +128,18 @@ uint16_t getTopKey(volatile uint8_t array[]) {
 void sampleISR(){
 	static int32_t phaseAcc = 0;
 	phaseAcc += currentStepSize;
-	int32_t Vout = (phaseAcc >> 16)*25*volume;
-	Vout = Vout >> 16;
+	int32_t Vout = phaseAcc >> 16; 
+	if(volumeFiner){
+		Vout = (Vout*12*volume) >> 16;
+	}else{ // 25 = floor( (1/10) << 8 )
+		Vout = (Vout*25*volume) >> 16; 	//scale by 2*8 cuz 16-bit*8-bit=24-bit -> scale by 16 to get to 8
+	}
 	analogWrite(OUTR_PIN, Vout + 128);
 }
 
 void scanKeysTask(void * pvParameters){
 	uint8_t keyArrayCopy[7];
+	bool volumeFinerNext;
 	const TickType_t xFrequency = 50/portTICK_PERIOD_MS;
 	TickType_t xLastWakeTime = xTaskGetTickCount();
 	while(1){
@@ -149,8 +155,16 @@ void scanKeysTask(void * pvParameters){
 		digitalToggle(LED_BUILTIN);
 		__atomic_store_n(&currentStepSize, stepSizes[getTopKey(keyArrayCopy)], __ATOMIC_RELAXED);
 		K1.updateRotation(keyArrayCopy[4] & 0x1, keyArrayCopy[4] & 0x2);
+		if(volumeFiner){
+			K3.changeLimitsVolume(0,20);
+		}else{
+			K3.changeLimitsVolume(0,10);
+		}
 		K3.updateRotation(keyArrayCopy[3] & 0x1, keyArrayCopy[3] & 0x2);
 		__atomic_store_n(&volume, K3.getRotation(), __ATOMIC_RELAXED);
+		volumeHistory = (volumeHistory << 1) + ((keyArrayCopy[5]&0x2)>>1);
+		volumeFinerNext = ((!(volumeHistory==1))&volumeFiner) | ((volumeHistory==1)&!volumeFiner);
+		__atomic_store_n(&volumeFiner, volumeFinerNext, __ATOMIC_RELAXED);
 	}
 }
 
@@ -192,20 +206,24 @@ void displayUpdateTask(void * pvParameters){
 		u8g2.setCursor(14, 30);
 		u8g2.print(octave);
 
-		// Print volume indicator and bar
-		int K3_rot = K3.getRotation();
-		if(K3_rot==0){
-			u8g2.drawXBM(116,22,13,9,volumes[5]);
-		}else if(K3_rot<3){
-			u8g2.drawXBM(116,22,13,9,volumes[4]);
-		}else if(K3_rot<5){
-			u8g2.drawXBM(116,22,13,9,volumes[3]);
-		}else if(K3_rot<7){
-			u8g2.drawXBM(116,22,13,9,volumes[2]);
-		}else if(K3_rot<9){
-			u8g2.drawXBM(116,22,13,9,volumes[1]);
-		}else if(K3_rot<11){
-			u8g2.drawXBM(116,22,13,9,volumes[0]);
+		// Print volume indicator
+		if(!volumeFiner){
+			if(volume==0){
+				u8g2.drawXBM(116,22,13,9,volumes[5]);
+			}else if(volume<3){
+				u8g2.drawXBM(116,22,13,9,volumes[4]);
+			}else if(volume<5){
+				u8g2.drawXBM(116,22,13,9,volumes[3]);
+			}else if(volume<7){
+				u8g2.drawXBM(116,22,13,9,volumes[2]);
+			}else if(volume<9){
+				u8g2.drawXBM(116,22,13,9,volumes[1]);
+			}else if(volume<11){
+				u8g2.drawXBM(116,22,13,9,volumes[0]);
+			};
+		}else{
+			u8g2.setCursor(122, 30);
+			u8g2.print(volume/2);
 		};
 		u8g2.sendBuffer(); // transfer internal memory to the display
 	}

@@ -14,6 +14,8 @@ public:
     int getRotation();
 
     void updateRotation(bool ANew, bool BNew);
+
+    void changeLimitsVolume(int newMinimum, int newMaximum);
 };
 
 #endif
