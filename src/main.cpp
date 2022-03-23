@@ -122,10 +122,16 @@ void scanKeysTask(void * pvParameters){
 }
 
 void displayUpdateTask(void * pvParameters){
+	uint8_t keyArrayCopy[7];
 	const TickType_t xFrequency = 100/portTICK_PERIOD_MS;
 	TickType_t xLastWakeTime = xTaskGetTickCount();
 	while(1){
 		vTaskDelayUntil(&xLastWakeTime, xFrequency);
+
+		xSemaphoreTake(keyArrayMutex, portMAX_DELAY);
+		memcpy(keyArrayCopy, (void*)keyArray, 7);
+		xSemaphoreGive(keyArrayMutex);
+
 		u8g2.clearBuffer();							// clear the internal memory
 		u8g2.setFont(u8g2_font_profont12_mf);		// choose a suitable font
 		u8g2.setCursor(2, 10);						// set the cursor position
@@ -133,8 +139,11 @@ void displayUpdateTask(void * pvParameters){
 		digitalToggle(LED_BUILTIN);
 		u8g2.setCursor(2, 20);
 		for (uint8_t i = 0; i < 7; i++) {
-			u8g2.print(keyArray[i], HEX);
+			u8g2.print(keyArrayCopy[6-i], HEX);
 		}
+		u8g2.drawStr(120,30,"+");
+		u8g2.drawStr(85,30,"-");
+		//u8g2.drawStr(100,30,"hi");
 		u8g2.sendBuffer(); // transfer internal memory to the display
 	}
 }
