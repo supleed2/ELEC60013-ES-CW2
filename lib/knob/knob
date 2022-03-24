@@ -10,10 +10,12 @@ class Knob {
 
   public:
 	Knob(int minimum, int max);
+	Knob(int minimum, int max, int initialRotation);
 
 	int getRotation();
 
 	void updateRotation(bool ANew, bool BNew);
+	void changeLimitsVolume(int newMinimum, int newMaximum);
 };
 
 #endif

@@ -10,6 +10,16 @@ Knob::Knob(int minimum, int maximum) {
 	Knob::rotation = 0;
 }
 
+Knob::Knob(int minimum, int maximum, int initialRotation) {
+    Knob::minimum = minimum;
+    Knob::maximum = maximum;
+    Knob::A = false;
+    Knob::B = false;
+    Knob::rotPlusOnePrev = false;
+    Knob::rotMinOnePrev = false;
+    Knob::rotation = initialRotation;
+}
+
 int Knob::getRotation() {
 	return Knob::rotation;
 };
@@ -31,9 +41,9 @@ void Knob::updateRotation(bool ANew, bool BNew) {
 						   (B && A && !BNew && !ANew);
 
 	if (rotPlusOneNew || (impossibleState && rotPlusOnePrev))
-		rotation += 2;
+		rotation += 1;
 	if (rotMinOneNew || (impossibleState && rotMinOnePrev))
-		rotation -= 2;
+		rotation -= 1;
 	if (rotation < minimum)
 		rotation = minimum;
 	if (rotation > maximum)
@@ -46,3 +56,13 @@ void Knob::updateRotation(bool ANew, bool BNew) {
 		rotMinOnePrev = rotMinOneNew;
 	}
 }
+
+void Knob::changeLimitsVolume(int newMinimum, int newMaximum) {
+    if(newMaximum>maximum){
+        rotation = rotation<<1;
+    }else if(newMaximum<maximum){
+        rotation = rotation>>1;
+    }else{}
+    minimum = newMinimum;
+    maximum = newMaximum;
+};

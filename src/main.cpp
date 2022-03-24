@@ -14,7 +14,7 @@ const uint32_t canID = 0x123;
 // Variables
 std::atomic<int32_t> currentStepSize;
 std::atomic<uint8_t> keyArray[7];
-std::atomic<uint8_t> octave = 4;		// Octave to start on
+std::atomic<uint8_t> octave;
 std::atomic<int8_t> volume;
 std::atomic<bool> volumeFiner;
 std::atomic<int8_t> wave;
@@ -170,35 +170,35 @@ void sampleISR(){
 	analogWrite(OUTR_PIN, Vout + 128);
 }
 
-void CAN_RX_ISR() {
-	uint8_t ISR_RX_Message[8];
-	uint32_t ISR_rxID;
-	CAN_RX(ISR_rxID, ISR_RX_Message);
-	xQueueSendFromISR(msgInQ, ISR_RX_Message, nullptr);
-}
+// void CAN_RX_ISR() {
+// 	uint8_t ISR_RX_Message[8];
+// 	uint32_t ISR_rxID;
+// 	CAN_RX(ISR_rxID, ISR_RX_Message);
+// 	xQueueSendFromISR(msgInQ, ISR_RX_Message, nullptr);
+// }
 
-void decodeTask(void *pvParameters) {
-	while (1) {
-		xQueueReceive(msgInQ, RX_Message, portMAX_DELAY);
-		if (RX_Message[0] == 0x50) { // Pressed
-			currentStepSize = notes[(RX_Message[1] - 1) * 12 + RX_Message[2]].stepSize;
-		} else { // Released
-			currentStepSize = 0;
-		}
-	}
-}
+// void decodeTask(void *pvParameters) {
+// 	while (1) {
+// 		xQueueReceive(msgInQ, RX_Message, portMAX_DELAY);
+// 		if (RX_Message[0] == 0x50) { // Pressed
+// 			currentStepSize = notes[(RX_Message[1] - 1) * 12 + RX_Message[2]].stepSize;
+// 		} else { // Released
+// 			currentStepSize = 0;
+// 		}
+// 	}
+// }
 
-void keyChangedSendTXMessage(uint8_t octave, uint8_t key, bool pressed) {
-	uint8_t TX_Message[8] = {0};
-	if (pressed) {
-		TX_Message[0] = 0x50; // "P"
-	} else {
-		TX_Message[0] = 0x52; // "R"
-	}
-	TX_Message[1] = octave;
-	TX_Message[2] = key;
-	CAN_TX(canID, TX_Message);
-}
+// void keyChangedSendTXMessage(uint8_t octave, uint8_t key, bool pressed) {
+// 	uint8_t TX_Message[8] = {0};
+// 	if (pressed) {
+// 		TX_Message[0] = 0x50; // "P"
+// 	} else {
+// 		TX_Message[0] = 0x52; // "R"
+// 	}
+// 	TX_Message[1] = octave;
+// 	TX_Message[2] = key;
+// 	CAN_TX(canID, TX_Message);
+// }
 
 // Task to update keyArray values at a higher priority
 void scanKeysTask(void *pvParameters) {
@@ -217,7 +217,7 @@ void scanKeysTask(void *pvParameters) {
 				keyArray[i] = newRow;
 				for (uint8_t j = 0; j < 4; j++) {
 					if ((oldRow & (0x1 << j)) ^ (newRow & (0x1 << j))) {
-						keyChangedSendTXMessage(octave, i * 4 + j + 1, newRow & (0x1 << j));
+						//keyChangedSendTXMessage(octave, i * 4 + j + 1, newRow & (0x1 << j));
 					}
 				}
 			}
@@ -303,6 +303,7 @@ void displayUpdateTask(void *pvParameters) {
 }
 
 void setup() {
+	octave = 4;
 #pragma region Pin Setup
 	pinMode(RA0_PIN, OUTPUT);
 	pinMode(RA1_PIN, OUTPUT);
@@ -330,13 +331,13 @@ void setup() {
 	Serial.begin(115200);
 	Serial.println("Hello World");
 #pragma endregion
-#pragma region CAN Setup
-	msgInQ = xQueueCreate(36, 8);
-	CAN_Init(true);
-	setCANFilter(0x123, 0x7ff);
-	CAN_RegisterRX_ISR(CAN_RX_ISR);
-	CAN_Start();
-#pragma endregion
+// #pragma region CAN Setup
+// 	msgInQ = xQueueCreate(36, 8);
+// 	CAN_Init(true);
+// 	setCANFilter(0x123, 0x7ff);
+// 	CAN_RegisterRX_ISR(CAN_RX_ISR);
+// 	CAN_Start();
+// #pragma endregion
 #pragma region Task Scheduler Setup
 	TIM_TypeDef *Instance = TIM1;
 	HardwareTimer *sampleTimer = new HardwareTimer(Instance);
