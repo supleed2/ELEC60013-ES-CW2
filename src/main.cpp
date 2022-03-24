@@ -2,6 +2,7 @@
 #include <STM32FreeRTOS.h>
 #include <U8g2lib.h>
 #include <atomic>
+#include <es_can>
 #include <knob>
 #include <string>
 
@@ -10,9 +11,12 @@
 const uint32_t interval = 10;		 // Display update interval
 const uint8_t octave = 4;			 // Octave to start on
 const uint32_t samplingRate = 44100; // Sampling rate
+const uint32_t canID = 0x123;
 // Variables
 std::atomic<int32_t> currentStepSize;
 std::atomic<uint8_t> keyArray[7];
+QueueHandle_t msgInQ;
+uint8_t RX_Message[8] = {0};
 // Objects
 U8G2_SSD1305_128X32_NONAME_F_HW_I2C u8g2(U8G2_R0); // Display driver object
 Knob K3 = Knob(0, 16);							   // Knob driver object
@@ -120,7 +124,7 @@ uint16_t getTopKey() {
 	for (uint8_t i = 0; i < 3; i++) {
 		for (uint8_t j = 0; j < 4; j++) {
 			if (keyArray[i] & (0x1 << j)) {
-				topKey = (octave - 2) * 12 + i * 4 + j + 1;
+				topKey = (octave - 1) * 12 + i * 4 + j + 1;
 			}
 		}
 	}
@@ -135,6 +139,36 @@ void sampleISR() {
 	analogWrite(OUTR_PIN, Vout + 128);
 }
 
+void CAN_RX_ISR() {
+	uint8_t ISR_RX_Message[8];
+	uint32_t ISR_rxID;
+	CAN_RX(ISR_rxID, ISR_RX_Message);
+	xQueueSendFromISR(msgInQ, ISR_RX_Message, nullptr);
+}
+
+void decodeTask(void *pvParameters) {
+	while (1) {
+		xQueueReceive(msgInQ, RX_Message, portMAX_DELAY);
+		if (RX_Message[0] == 0x50) { // Pressed
+			currentStepSize = notes[(RX_Message[1] - 1) * 12 + RX_Message[2]].stepSize;
+		} else { // Released
+			currentStepSize = 0;
+		}
+	}
+}
+
+void keyChangedSendTXMessage(uint8_t octave, uint8_t key, bool pressed) {
+	uint8_t TX_Message[8] = {0};
+	if (pressed) {
+		TX_Message[0] = 0x50; // "P"
+	} else {
+		TX_Message[0] = 0x52; // "R"
+	}
+	TX_Message[1] = octave;
+	TX_Message[2] = key;
+	CAN_TX(canID, TX_Message);
+}
+
 // Task to update keyArray values at a higher priority
 void scanKeysTask(void *pvParameters) {
 	const TickType_t xFrequency = 50 / portTICK_PERIOD_MS;
@@ -143,8 +177,19 @@ void scanKeysTask(void *pvParameters) {
 		vTaskDelayUntil(&xLastWakeTime, xFrequency);
 		for (uint8_t i = 0; i < 7; i++) {
 			setRow(i);
+			uint8_t oldRow = keyArray[i];
 			delayMicroseconds(3);
-			keyArray[i] = readCols();
+			uint8_t newRow = readCols();
+			if (oldRow == newRow) {
+				continue;
+			} else {
+				keyArray[i] = newRow;
+				for (uint8_t j = 0; j < 4; j++) {
+					if ((oldRow & (0x1 << j)) ^ (newRow & (0x1 << j))) {
+						keyChangedSendTXMessage(octave, i * 4 + j + 1, newRow & (0x1 << j));
+					}
+				}
+			}
 		}
 		currentStepSize = notes[getTopKey()].stepSize; // Atomic Store
 		K3.updateRotation(keyArray[3] & 0x1, keyArray[3] & 0x2);
@@ -157,6 +202,8 @@ void displayUpdateTask(void *pvParameters) {
 	TickType_t xLastWakeTime = xTaskGetTickCount();
 	while (1) {
 		vTaskDelayUntil(&xLastWakeTime, xFrequency);
+		uint32_t rxID;
+
 		u8g2.clearBuffer();					  // clear the internal memory
 		u8g2.setFont(u8g2_font_profont12_mf); // choose a suitable font
 		uint16_t key = getTopKey();
@@ -166,7 +213,11 @@ void displayUpdateTask(void *pvParameters) {
 		for (uint8_t i = 0; i < 7; i++) {
 			u8g2.print(keyArray[i], HEX);
 		}
-		u8g2.drawXBM(118, 0, 10, 10, icon_bits);
+		// u8g2.drawXBM(118, 0, 10, 10, icon_bits);
+		u8g2.setCursor(100, 10);
+		u8g2.print((char)RX_Message[0]);
+		u8g2.print(RX_Message[1]);
+		u8g2.print(RX_Message[2], HEX);
 		u8g2.setCursor(2, 30);
 		u8g2.print(K3.getRotation());
 		u8g2.sendBuffer(); // transfer internal memory to the display
@@ -201,19 +252,26 @@ void setup() {
 	Serial.begin(115200);
 	Serial.println("Hello World");
 #pragma endregion
+#pragma region CAN Setup
+	msgInQ = xQueueCreate(36, 8);
+	CAN_Init(true);
+	setCANFilter(0x123, 0x7ff);
+	CAN_RegisterRX_ISR(CAN_RX_ISR);
+	CAN_Start();
+#pragma endregion
 #pragma region Task Scheduler Setup
 	TIM_TypeDef *Instance = TIM1;
 	HardwareTimer *sampleTimer = new HardwareTimer(Instance);
 	sampleTimer->setOverflow(samplingRate, HERTZ_FORMAT);
 	sampleTimer->attachInterrupt(sampleISR);
 	sampleTimer->resume();
-	TaskHandle_t scanKeysHandle = NULL;
-	TaskHandle_t displayUpdateHandle = NULL;
+	TaskHandle_t scanKeysHandle = nullptr;
+	TaskHandle_t displayUpdateHandle = nullptr;
 	xTaskCreate(
 		scanKeysTask,	// Function that implements the task
 		"scanKeys",		// Text name for the task
 		64,				// Stack size in words, not bytes
-		NULL,			// Parameter passed into the task
+		nullptr,		// Parameter passed into the task
 		2,				// Task priority
 		&scanKeysHandle // Pointer to store the task handle
 	);
@@ -221,7 +279,7 @@ void setup() {
 		displayUpdateTask,	 // Function that implements the task
 		"displayUpdate",	 // Text name for the task
 		256,				 // Stack size in words, not bytes
-		NULL,				 // Parameter passed into the task
+		nullptr,			 // Parameter passed into the task
 		1,					 // Task priority
 		&displayUpdateHandle // Pointer to store the task handle
 	);
