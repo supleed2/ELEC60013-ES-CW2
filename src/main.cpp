@@ -1,66 +1,73 @@
-// https://github.com/adamb314/ThreadHandler
-
 #include <Arduino.h>
-#include <U8g2lib.h>
 #include <STM32FreeRTOS.h>
-#include "knob.h"
+#include <U8g2lib.h>
+#include <atomic>
+#include <es_can>
+#include <knob>
+#include <string>
 
-volatile int32_t currentStepSize;
-volatile uint8_t keyArray[7];
-volatile int8_t volume;
-volatile bool volumeFiner;
-volatile int8_t wave;
-volatile int8_t octave = 4;
+#pragma region Globals(Config values, Variables, Objects, Types, etc.)
+// Config values
+const uint32_t interval = 10;		 // Display update interval
+const uint32_t samplingRate = 44100; // Sampling rate
+const uint32_t canID = 0x123;
+// Variables
+std::atomic<int32_t> currentStepSize;
+std::atomic<uint8_t> keyArray[7];
+std::atomic<uint8_t> octave = 4;		// Octave to start on
+std::atomic<int8_t> volume;
+std::atomic<bool> volumeFiner;
+std::atomic<int8_t> wave;
 int8_t volumeHistory = 0;
-SemaphoreHandle_t keyArrayMutex;
+QueueHandle_t msgInQ;
+uint8_t RX_Message[8] = {0};
+// Objects
+U8G2_SSD1305_128X32_NONAME_F_HW_I2C u8g2(U8G2_R0); // Display driver object
 Knob K0(2,14,8); 	//Octave encoder
 Knob K1(0,6); 		//Waveform encoder
 Knob K3(0,10);		//Volume encoder
-enum waves{SQUARE=0,SAWTOOTH,TRIANGLE,SINE};
-
-
-#pragma region Config Values
-const uint32_t interval = 10;		 // Display update interval
-const uint32_t samplingRate = 44100; // Sampling rate
-const int32_t stepSizes[] = {
-	0, 3374406, 3575058, 3787642, 4012867, 4251485, 4504291, 4772130,
-	5055896, 5356535, 5675051, 6012507,
-	6370029, 6748811, 7150116, 7575284, 8025734, 8502969, 9008582,
-	9544260, 10111791, 10713070, 11350102, 12025014, 12740059, 13497622,
-	14300233, 15150569, 16051469, 17005939, 18017164, 19088521, 20223583,
-	21426140, 22700205, 24050029, 25480118, 26995245, 28600466, 30301138,
-	32102938, 34011878, 36034329, 38177042, 40447167, 42852281, 45400410,
-	48100059, 50960237, 53990491, 57200933, 60602277, 64205876, 68023756,
-	72068659, 76354085, 80894335, 85704562, 90800821, 96200119, 101920475,
-	107980982, 114401866, 121204555, 12841175, 136047513, 144137319, 152708170,
-	161788670, 171409125, 181601642, 192400238, 203840952, 215961966,
-	228803732, 242409110, 256823506, 272095026, 288274639, 305416341, 323577341, 
-	342818251, 363203285, 384800477, 407681904}; // Step sizes for each note
-static unsigned char waveforms[4][18] = {
-	{0x7f, 0x10, 0x41, 0x10, 0x41, 0x10, 0x41, 0x10, 0x41, 0x10, 0x41, 0x10,
-	0x41, 0x10, 0x41, 0x10, 0xc1, 0x1f}, //square wave
-	{0x70, 0x10, 0x58, 0x18, 0x48, 0x08, 0x4c, 0x0c, 0x44, 0x04, 0x46, 0x06,
-   	0x42, 0x02, 0x43, 0x03, 0xc1, 0x01}, //sawtooth wave
-	{0x08, 0x00, 0x1c, 0x00, 0x36, 0x00, 0x63, 0x00, 0xc1, 0x00, 0x80, 0x11,
-	0x00, 0x1b, 0x00, 0x0e, 0x00, 0x04}, //triange wave
-	{0x1c, 0x00, 0x36, 0x00, 0x22, 0x00, 0x63, 0x00, 0x41, 0x10, 0xc0, 0x18,
-   	0x80, 0x08, 0x80, 0x0d, 0x00, 0x07} //sine wave
+// Program Specific Structures
+typedef struct{
+	int32_t stepSize;
+	std::string note;
+} Note;
+const Note notes[] = {
+	{0, "None"}, {3185014, "C1"}, {3374405, "C1#"}, {3575058, "D1"}, {3787642, "D1#"}, {4012867, "E1"}, {4251484, "F1"}, {4504291, "F1#"}, {4772130, "G1"}, {5055895, "G1#"}, {5356535, "A1"}, {5675051, "A1#"}, {6012507, "B1"}, {6370029, "C2"}, {6748811, "C2#"}, {7150116, "D2"}, {7575284, "D2#"}, {8025734, "E2"}, {8502969, "F2"}, {9008582, "F2#"}, {9544260, "G2"}, {10111791, "G2#"}, {10713070, "A2"}, {11350102, "A2#"}, {12025014, "B2"}, {12740059, "C3"}, {13497622, "C3#"}, {14300233, "D3"}, {15150569, "D3#"}, {16051469, "E3"}, {17005939, "F3"}, {18017164, "F3#"}, {19088521, "G3"}, {20223583, "G3#"}, {21426140, "A3"}, {22700205, "A3#"}, {24050029, "B3"}, {25480118, "C4"}, {26995245, "C4#"}, {28600466, "D4"}, {30301138, "D4#"}, {32102938, "E4"}, {34011878, "F4"}, {36034329, "F4#"}, {38177042, "G4"}, {40447167, "G4#"}, {42852281, "A4"}, {45400410, "A4#"}, {48100059, "B4"}, {50960237, "C5"}, {53990491, "C5#"}, {57200933, "D5"}, {60602277, "D5#"}, {64205876, "E5"}, {68023756, "F5"}, {72068659, "F5#"}, {76354085, "G5"}, {80894335, "G5#"}, {85704562, "A5"}, {90800821, "A5#"}, {96200119, "B5"}, {101920475, "C6"}, {107980982, "C6#"}, {114401866, "D6"}, {121204555, "D6#"}, {128411753, "E6"}, {136047513, "F6"}, {144137319, "F6#"}, {152708170, "G6"}, {161788670, "G6#"}, {171409125, "A6"}, {181601642, "A6#"}, {192400238, "B6"}, {203840951, "C7"}, {215961965, "C7#"}, {228803732, "D7"}, {242409110, "D7#"}, {256823506, "E7"}, {272095026, "F7"}, {288274638, "F7#"}, {305416340, "G7"}, {323577341, "G7#"}, {342818251, "A7"}, {363203285, "A7#"}, {384800476, "B7"}};
+enum waveform {
+	SQUARE = 0,
+	SAWTOOTH,
+	TRIANGLE,
+	SINE
 };
-static unsigned char volumes[6][18] = {
-	{0x10, 0x02, 0x98, 0x04, 0x1c, 0x05, 0x5f, 0x09, 0x5f, 0x09, 0x5f, 0x09,
-   	0x1c, 0x05, 0x98, 0x04, 0x10, 0x02 }, //volume max
-	{0x10, 0x00, 0x98, 0x00, 0x1c, 0x01, 0x5f, 0x01, 0x5f, 0x01, 0x5f, 0x01,
-   	0x1c, 0x01, 0x98, 0x00, 0x10, 0x00 }, //volume mid higher
-	{0x10, 0x00, 0x18, 0x00, 0x1c, 0x01, 0x5f, 0x01, 0x5f, 0x01, 0x5f, 0x01,
-   	0x1c, 0x01, 0x18, 0x00, 0x10, 0x00 }, //volume mid lower
-	{0x10, 0x00, 0x18, 0x00, 0x1c, 0x00, 0x5f, 0x00, 0x5f, 0x00, 0x5f, 0x00,
-   	0x1c, 0x00, 0x18, 0x00, 0x10, 0x00 }, //volume low
-	{0x10, 0x00, 0x18, 0x00, 0x1c, 0x00, 0x1f, 0x00, 0x5f, 0x00, 0x1f, 0x00,
-   	0x1c, 0x00, 0x18, 0x00, 0x10, 0x00 }, //volume lowest
-	{0x10, 0x00, 0x18, 0x00, 0x5c, 0x04, 0x9f, 0x02, 0x1f, 0x01, 0x9f, 0x02,
-   	0x5c, 0x04, 0x18, 0x00, 0x10, 0x00} //mute
+const unsigned char waveforms[4][18] = {
+	{0x7f, 0x10, 0x41, 0x10, 0x41, 0x10, 0x41, 0x10, 0x41,
+	 0x10, 0x41, 0x10, 0x41, 0x10, 0x41, 0x10, 0xc1, 0x1f}, // Square Wave
+	{0x70, 0x10, 0x58, 0x18, 0x48, 0x08, 0x4c, 0x0c, 0x44,
+	 0x04, 0x46, 0x06, 0x42, 0x02, 0x43, 0x03, 0xc1, 0x01}, // Sawtooth Wave
+	{0x08, 0x00, 0x1c, 0x00, 0x36, 0x00, 0x63, 0x00, 0xc1,
+	 0x00, 0x80, 0x11, 0x00, 0x1b, 0x00, 0x0e, 0x00, 0x04}, // Triangle Wave
+	{0x1c, 0x00, 0x36, 0x00, 0x22, 0x00, 0x63, 0x00, 0x41,
+	 0x10, 0xc0, 0x18, 0x80, 0x08, 0x80, 0x0d, 0x00, 0x07} // Sine Wave
 };
+const unsigned char volumes[6][18] = {
+	{0x10, 0x02, 0x98, 0x04, 0x1c, 0x05, 0x5f, 0x09, 0x5f,
+	 0x09, 0x5f, 0x09, 0x1c, 0x05, 0x98, 0x04, 0x10, 0x02}, // volume max
+	{0x10, 0x00, 0x98, 0x00, 0x1c, 0x01, 0x5f, 0x01, 0x5f,
+	 0x01, 0x5f, 0x01, 0x1c, 0x01, 0x98, 0x00, 0x10, 0x00}, // volume mid higher
+	{0x10, 0x00, 0x18, 0x00, 0x1c, 0x01, 0x5f, 0x01, 0x5f,
+	 0x01, 0x5f, 0x01, 0x1c, 0x01, 0x18, 0x00, 0x10, 0x00}, // volume mid lower
+	{0x10, 0x00, 0x18, 0x00, 0x1c, 0x00, 0x5f, 0x00, 0x5f,
+	 0x00, 0x5f, 0x00, 0x1c, 0x00, 0x18, 0x00, 0x10, 0x00}, // volume low
+	{0x10, 0x00, 0x18, 0x00, 0x1c, 0x00, 0x1f, 0x00, 0x5f,
+	 0x00, 0x1f, 0x00, 0x1c, 0x00, 0x18, 0x00, 0x10, 0x00}, // volume lowest
+	{0x10, 0x00, 0x18, 0x00, 0x5c, 0x04, 0x9f, 0x02, 0x1f,
+	 0x01, 0x9f, 0x02, 0x5c, 0x04, 0x18, 0x00, 0x10, 0x00} // mute
+};
+const unsigned char icon_bits[] = {
+	0x00, 0x00, 0x00, 0x00, 0xcc, 0x00, 0xcc, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x02, 0x01, 0x02, 0x01, 0xfe, 0x01, 0x00, 0x00};
 #pragma endregion
+
 #pragma region Pin Definitions
 // Row select and enable
 const int RA0_PIN = D3;
@@ -86,8 +93,6 @@ const int HKOW_BIT = 5;
 const int HKOE_BIT = 6;
 #pragma endregion
 
-U8G2_SSD1305_128X32_NONAME_F_HW_I2C u8g2(U8G2_R0); // Display driver object
-
 // Function to set outputs using key matrix
 void setOutMuxBit(const uint8_t bitIdx, const bool value) {
 	digitalWrite(REN_PIN, LOW);
@@ -110,7 +115,7 @@ uint8_t readCols() {
 	return row;
 }
 
-// Set current row
+// Set multiplexer bits to select row
 void setRow(const uint8_t rowIdx) {
 	digitalWrite(REN_PIN, LOW);
 	digitalWrite(RA0_PIN, rowIdx & 0x01);
@@ -118,6 +123,7 @@ void setRow(const uint8_t rowIdx) {
 	digitalWrite(RA2_PIN, rowIdx & 0x04);
 	digitalWrite(REN_PIN, HIGH);
 }
+
 
 uint32_t scaleVolume(uint32_t Vout){
 	uint32_t newVout = 0;
@@ -129,20 +135,20 @@ uint32_t scaleVolume(uint32_t Vout){
 	return newVout;
 }
 
-//uint32_t combineNotes(uint32_t lol){}
-
-uint16_t getTopKey(volatile uint8_t array[]) {
+// Returns key value (as notes[] index) of highest currently pressed key
+uint16_t getTopKey() {
 	uint16_t topKey = 0;
 	for (uint8_t i = 0; i < 3; i++) {
 		for (uint8_t j = 0; j < 4; j++) {
-			if (array[i] & (0x1 << j)) {
-				topKey = (octave-1) * 12 + i * 4 + j + 1;
+			if (keyArray[i] & (0x1 << j)) {
+				topKey = (octave - 1) * 12 + i * 4 + j + 1;
 			}
 		}
 	}
 	return topKey;
 }
 
+// Interrupt driven routine to send waveform to DAC
 void sampleISR(){
 	static int32_t phaseAcc = 0;
 	phaseAcc += currentStepSize;
@@ -164,60 +170,97 @@ void sampleISR(){
 	analogWrite(OUTR_PIN, Vout + 128);
 }
 
-void scanKeysTask(void * pvParameters){
-	uint8_t keyArrayCopy[7];
-	bool volumeFinerNext;
-	const TickType_t xFrequency = 50/portTICK_PERIOD_MS;
+void CAN_RX_ISR() {
+	uint8_t ISR_RX_Message[8];
+	uint32_t ISR_rxID;
+	CAN_RX(ISR_rxID, ISR_RX_Message);
+	xQueueSendFromISR(msgInQ, ISR_RX_Message, nullptr);
+}
+
+void decodeTask(void *pvParameters) {
+	while (1) {
+		xQueueReceive(msgInQ, RX_Message, portMAX_DELAY);
+		if (RX_Message[0] == 0x50) { // Pressed
+			currentStepSize = notes[(RX_Message[1] - 1) * 12 + RX_Message[2]].stepSize;
+		} else { // Released
+			currentStepSize = 0;
+		}
+	}
+}
+
+void keyChangedSendTXMessage(uint8_t octave, uint8_t key, bool pressed) {
+	uint8_t TX_Message[8] = {0};
+	if (pressed) {
+		TX_Message[0] = 0x50; // "P"
+	} else {
+		TX_Message[0] = 0x52; // "R"
+	}
+	TX_Message[1] = octave;
+	TX_Message[2] = key;
+	CAN_TX(canID, TX_Message);
+}
+
+// Task to update keyArray values at a higher priority
+void scanKeysTask(void *pvParameters) {
+	const TickType_t xFrequency = 50 / portTICK_PERIOD_MS;
 	TickType_t xLastWakeTime = xTaskGetTickCount();
-	while(1){
+	while (1) {
 		vTaskDelayUntil(&xLastWakeTime, xFrequency);
 		for (uint8_t i = 0; i < 7; i++) {
 			setRow(i);
+			uint8_t oldRow = keyArray[i];
 			delayMicroseconds(3);
-			keyArrayCopy[i] = readCols();
-		}
-		xSemaphoreTake(keyArrayMutex, portMAX_DELAY);
-		memcpy((void*)keyArray, keyArrayCopy, 7);
-		xSemaphoreGive(keyArrayMutex);
-		digitalToggle(LED_BUILTIN);
-		__atomic_store_n(&currentStepSize, stepSizes[getTopKey(keyArrayCopy)], __ATOMIC_RELAXED);
-		K0.updateRotation(keyArrayCopy[4] & 0x4, keyArrayCopy[4] & 0x8);
-		__atomic_store_n(&octave, K0.getRotation()/2, __ATOMIC_RELAXED);
-		K1.updateRotation(keyArrayCopy[4] & 0x1, keyArrayCopy[4] & 0x2);
-		__atomic_store_n(&wave, K1.getRotation()/2, __ATOMIC_RELAXED);
+			uint8_t newRow = readCols();
+			if (oldRow == newRow) {
+				continue;
+			} else {
+				keyArray[i] = newRow;
+				for (uint8_t j = 0; j < 4; j++) {
+					if ((oldRow & (0x1 << j)) ^ (newRow & (0x1 << j))) {
+						keyChangedSendTXMessage(octave, i * 4 + j + 1, newRow & (0x1 << j));
+					}
+				}
+			}
+		};
 		if(volumeFiner){
 			K3.changeLimitsVolume(0,20);
 		}else{
 			K3.changeLimitsVolume(0,10);
-		}
-		K3.updateRotation(keyArrayCopy[3] & 0x1, keyArrayCopy[3] & 0x2);
-		__atomic_store_n(&volume, K3.getRotation(), __ATOMIC_RELAXED);
-		volumeHistory = (volumeHistory << 1) + ((keyArrayCopy[5]&0x2)>>1);
-		volumeFinerNext = ((!(volumeHistory==1))&volumeFiner) | ((volumeHistory==1)&!volumeFiner);
-		__atomic_store_n(&volumeFiner, volumeFinerNext, __ATOMIC_RELAXED);
+		};
+		currentStepSize = notes[getTopKey()].stepSize; // Atomic Store
+		K0.updateRotation(keyArray[4] & 0x4, keyArray[4] & 0x8);
+		octave = K0.getRotation()/2;
+		K1.updateRotation(keyArray[4] & 0x1, keyArray[4] & 0x2);
+		wave = K1.getRotation()/2;
+		K3.updateRotation(keyArray[3] & 0x1, keyArray[3] & 0x2);
+		volume = K3.getRotation();
+		volumeHistory = (volumeHistory << 1) + ((keyArray[5]&0x2)>>1);
+		volumeFiner = ((!(volumeHistory==1))&volumeFiner) | ((volumeHistory==1)&!volumeFiner);
 	}
 }
 
-void displayUpdateTask(void * pvParameters){
-	uint8_t keyArrayCopy[7];
-	const TickType_t xFrequency = 100/portTICK_PERIOD_MS;
+// Task containing display graphics and update code
+void displayUpdateTask(void *pvParameters) {
+	const TickType_t xFrequency = 100 / portTICK_PERIOD_MS;
 	TickType_t xLastWakeTime = xTaskGetTickCount();
-	while(1){
+	while (1) {
 		vTaskDelayUntil(&xLastWakeTime, xFrequency);
+		uint32_t rxID;
 
-		xSemaphoreTake(keyArrayMutex, portMAX_DELAY);
-		memcpy(keyArrayCopy, (void*)keyArray, 7);
-		xSemaphoreGive(keyArrayMutex);
-
-		u8g2.clearBuffer();							// clear the internal memory
-		u8g2.setFont(u8g2_font_profont12_mf);		// choose a suitable font
-		u8g2.setCursor(2, 10);						// set the cursor position
-		u8g2.print(currentStepSize); // Print the current frequency
-		//digitalToggle(LED_BUILTIN);
+		u8g2.clearBuffer();					  // clear the internal memory
+		u8g2.setFont(u8g2_font_profont12_mf); // choose a suitable font
+		uint16_t key = getTopKey();
+		u8g2.drawStr(2, 10, notes[key].note.c_str()); // Print the current key
+		digitalToggle(LED_BUILTIN);
 		u8g2.setCursor(2, 20);
 		for (uint8_t i = 0; i < 7; i++) {
-			u8g2.print(keyArrayCopy[6-i], HEX);
-		}
+			u8g2.print(keyArray[i], HEX);
+		};
+		u8g2.setCursor(100, 10);
+		u8g2.print((char)RX_Message[0]);
+		u8g2.print(RX_Message[1]);
+		u8g2.print(RX_Message[2], HEX);
+
 		// Print waveform icon
 		int K1_rot = K1.getRotation();
 		if(K1_rot<2){
@@ -283,39 +326,43 @@ void setup() {
 	u8g2.begin();
 	setOutMuxBit(DEN_BIT, HIGH); // Enable display power supply
 #pragma endregion
-
-	// Initialise UART
+#pragma region UART Setup
 	Serial.begin(115200);
 	Serial.println("Hello World");
-
+#pragma endregion
+#pragma region CAN Setup
+	msgInQ = xQueueCreate(36, 8);
+	CAN_Init(true);
+	setCANFilter(0x123, 0x7ff);
+	CAN_RegisterRX_ISR(CAN_RX_ISR);
+	CAN_Start();
+#pragma endregion
+#pragma region Task Scheduler Setup
 	TIM_TypeDef *Instance = TIM1;
 	HardwareTimer *sampleTimer = new HardwareTimer(Instance);
 	sampleTimer->setOverflow(samplingRate, HERTZ_FORMAT);
 	sampleTimer->attachInterrupt(sampleISR);
 	sampleTimer->resume();
-
-	TaskHandle_t scanKeysHandle = NULL;
-	TaskHandle_t displayUpdateHandle = NULL;
+	TaskHandle_t scanKeysHandle = nullptr;
+	TaskHandle_t displayUpdateHandle = nullptr;
 	xTaskCreate(
-		scanKeysTask, /* Function that implements the task */
-		"scanKeys", /* Text name for the task */
-		64, /* Stack size in words, not bytes */
-		NULL, /* Parameter passed into the task */
-		2, /* Task priority */
-		&scanKeysHandle /* Pointer to store the task handle */
+		scanKeysTask,	// Function that implements the task
+		"scanKeys",		// Text name for the task
+		64,				// Stack size in words, not bytes
+		nullptr,		// Parameter passed into the task
+		2,				// Task priority
+		&scanKeysHandle // Pointer to store the task handle
 	);
 	xTaskCreate(
-		displayUpdateTask, /* Function that implements the task */
-		"displayUpdate", /* Text name for the task */
-		256, /* Stack size in words, not bytes */
-		NULL, /* Parameter passed into the task */
-		1, /* Task priority */
-		&displayUpdateHandle /* Pointer to store the task handle */
+		displayUpdateTask,	 // Function that implements the task
+		"displayUpdate",	 // Text name for the task
+		256,				 // Stack size in words, not bytes
+		nullptr,			 // Parameter passed into the task
+		1,					 // Task priority
+		&displayUpdateHandle // Pointer to store the task handle
 	);
-
-	keyArrayMutex = xSemaphoreCreateMutex();
-
 	vTaskStartScheduler();
+#pragma endregion
 }
 
-void loop() {}
+void loop() {} // No code in loop, as everything is done in the tasks
