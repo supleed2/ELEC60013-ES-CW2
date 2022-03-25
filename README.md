@@ -124,17 +124,22 @@ Therefore, total latency is slightly over 23.07ms. The exact latency could not b
 
 The total CPU usage is calculated by dividing the total latency by the highest initiation time. In this case the CPU usage is ~25%.
 
-## Shared data structures
+## Shared data structures & dependencies
 
 * `currentStepSize`, safe access guaranteed using `std::atomic<uint32_t>`, stores the step size of the most recently pressed key, to be used within `sampleISR()`
 * `keyArray`, each element within the array is of type `std::atomic<uint8_t>`, stores the current state of the key / encoder matrix
 * `msgInQ`, handled by FreeRTOS, pointer to the next item in the received CAN message queue
+* `latestKey`, guarded by `std::atomic<int>`, ensures that the current note is maintained as an integer value
+* `selectedWaveform` is an int (`std::atomic<uint32_t>`) corresponding to the currently selected Waveform type, that determined if the output is a Sawtooth, Square, Triangle or Sine wave.
+* `octave` is modified when the key is changed and the message displayed on the screen needs to be displayed, stored as an int.
 
 It was decided to use C++ `std::atomic`, as it is easier to use and implement, while providing the same functionality as a mutex. According to the documentation: *"Each instantiation and full specialization of the std::atomic template defines an atomic type. If one thread writes to an atomic object while another thread reads from it, the behavior is well-defined (see memory model for details on data races). In addition, accesses to atomic objects may establish inter-thread synchronization and order non-atomic memory accesses as specified by std::memory_order.*" - [CPP Reference "std::atomic"](https://en.cppreference.com/w/cpp/atomic/atomic)
 
 `std::atomic` makes use of atomic builtins within GCC in order to prevent data races from occuring when there are simultaneous accesses of a variable from different threads. The result of wrapping our global variables in `std::atomic<>` is that any access to these variables is always atomic, so data corruption is prevented. In some cases, such as `keyArray`, the array may be partially updated. This is not an issue for data integrity or program operation, as the keyArray update will simply be slightly delayed. This delay is unlikely to be noticable to the user.
 
 `msgInQ` is used as a FIFO buffer for CAN messages, to supplement the small buffer of the CAN system and allow for more messages to be retained, increasing the required minimum initiation time.
+
+![Dependency Graph](docs/DependencyGraph.png)
 
 ## Analysis of inter-task blocking dependencies
 
