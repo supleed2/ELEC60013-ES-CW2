@@ -143,8 +143,6 @@ The below figure displays a graph of the dependencies between the various tasks.
 
 ![Dependency Graph](docs/DependencyGraph.png)
 
-## Analysis of inter-task blocking dependencies
-
 ## Advanced features
 
 Several advanced features were implemented, including:
@@ -157,11 +155,16 @@ Several advanced features were implemented, including:
 
 ### Multiple waveforms
 
-Our system implements several waveforms - sawtooth, triangle, sine, square. Sawtooth was implemented first, by incrementing the step size and waiting for overflow to occur, reseting the waveform. The triangle function was obtained by modifying the sawtooth function. The absolute value of the sawtooth function is taken, shifted to remove the DC offset and doubled to resore the original size. The sine function was implemented using a sine table. Rectangular function was implemented by taking the sign of the sawtooth function.
+Our system implements several waveforms - sawtooth, triangle, sine, & square.
+* Sawtooth was implemented first, by incrementing the step size and waiting for overflow to occur, resetting the waveform.
+* Square is implemented by taking the sign of the sign and appropriately scaling to low or high voltage depending on this.
+* Triangle is implemented as a variation of Sawtooth, taking the absolute value of the phase shifting to remove the DC offset and then doubling to restore the original size.
+* Sine is implemented by calling to a look-up table, preestablished with the corresponding value of a sine wave at the relevant point in the input waveform
+
 
 ### User-friendly icons
 
-Using XMB icons, the display was made more user-friednly, containing a volume icon, that is animated to the current volume level. Furthermore, by pressing the knob, this icon is toggled to display the volume as an integer. Finally, several icons are used to display the current waveform.
+Using XMB icons, the display was made more user-friendly, containing a volume icon, that is animated to the current volume level. Furthermore, by pressing the knob, this icon is toggled to display the volume as an integer. Finally, several icons are used to display the current waveform.
 
 ### Automatic sender mode configuration using receiver module
 
