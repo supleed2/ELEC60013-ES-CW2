@@ -12,15 +12,22 @@ const uint32_t interval = 10;		 // Display update interval
 const uint32_t samplingRate = 22000; // Sampling rate
 const uint32_t canID = 0x123;
 // Variables
+std::atomic<bool> isMainSynth;
 std::atomic<int32_t> currentStepSize;
 std::atomic<uint8_t> keyArray[7];
 std::atomic<uint8_t> octave;
 std::atomic<uint8_t> selectedWaveform;
 QueueHandle_t msgInQ;
 uint8_t RX_Message[8] = {0};
+std::atomic<bool> bufferAactive;
+int32_t bufferA[220];
+int32_t bufferB[220];
 // Objects
-U8G2_SSD1305_128X32_NONAME_F_HW_I2C u8g2(U8G2_R0); // Display driver object
-Knob K3 = Knob(0, 16);							   // Knob driver object
+U8G2_SSD1305_128X32_NONAME_F_HW_I2C u8g2(U8G2_R0); // Display Driver Object
+Knob K0 = Knob(1, 7, 4);						   // Octave Knob Object
+Knob K1 = Knob(0, 3);							   // Waveform Knob Object
+Knob K2 = Knob(0, 1);							   // Send / Receive Knob Object
+Knob K3 = Knob(0, 16);							   // Volume Knob Object
 // Program Specific Structures
 const int32_t stepSizes[85] = {0, 6384507, 6764150, 7166367, 7592501, 8043975, 8522295, 9029057, 9565952, 10134773, 10737418, 11375898, 12052344, 12769014, 13528299, 14332734, 15185002, 16087950, 17044589, 18058113, 19131904, 20269547, 21474836, 22751797, 24104689, 25538028, 27056599, 28665468, 30370005, 32175899, 34089178, 36116226, 38263809, 40539093, 42949673, 45503593, 48209378, 51076057, 54113197, 57330935, 60740010, 64351799, 68178356, 72232452, 76527617, 81078186, 85899346, 91007187, 96418756, 102152113, 108226394, 114661870, 121480020, 128703598, 136356712, 144464904, 153055234, 162156372, 171798692, 182014374, 192837512, 204304227, 216452788, 229323741, 242960040, 257407196, 272713424, 288929808, 306110469, 324312744, 343597384, 364028747, 385675023, 408608453, 432905576, 458647482, 485920080, 514814392, 545426848, 577859616, 612220937, 648625489, 687194767, 728057495, 771350046};
 const char *notes[85] = {"None", "C1", "C1#", "D1", "D1#", "E1", "F1", "F1#", "G1", "G1#", "A1", "A1#", "B1", "C2", "C2#", "D2", "D2#", "E2", "F2", "F2#", "G2", "G2#", "A2", "A2#", "B2", "C3", "C3#", "D3", "D3#", "E3", "F3", "F3#", "G3", "G3#", "A3", "A3#", "B3", "C4", "C4#", "D4", "D4#", "E4", "F4", "F4#", "G4", "G4#", "A4", "A4#", "B4", "C5", "C5#", "D5", "D5#", "E5", "F5", "F5#", "G5", "G5#", "A5", "A5#", "B5", "C6", "C6#", "D6", "D6#", "E6", "F6", "F6#", "G6", "G6#", "A6", "A6#", "B6", "C7", "C7#", "D7", "D7#", "E7", "F7", "F7#", "G7", "G7#", "A7", "A7#", "B7"};
@@ -31,7 +38,7 @@ enum waveform {
 	TRIANGLE,
 	SINE
 };
-const unsigned char waveformIcons[4][18] = {
+const unsigned char waveforms[4][18] = {
 	{0x7f, 0x10, 0x41, 0x10, 0x41, 0x10, 0x41, 0x10, 0x41,
 	 0x10, 0x41, 0x10, 0x41, 0x10, 0x41, 0x10, 0xc1, 0x1f}, // Square Wave
 	{0x70, 0x10, 0x58, 0x18, 0x48, 0x08, 0x4c, 0x0c, 0x44,
@@ -41,7 +48,7 @@ const unsigned char waveformIcons[4][18] = {
 	{0x1c, 0x00, 0x36, 0x00, 0x22, 0x00, 0x63, 0x00, 0x41,
 	 0x10, 0xc0, 0x18, 0x80, 0x08, 0x80, 0x0d, 0x00, 0x07} // Sine Wave
 };
-const unsigned char volumeIcons[6][18] = {
+const unsigned char volumes[6][18] = {
 	{0x10, 0x02, 0x98, 0x04, 0x1c, 0x05, 0x5f, 0x09, 0x5f,
 	 0x09, 0x5f, 0x09, 0x1c, 0x05, 0x98, 0x04, 0x10, 0x02}, // volume max
 	{0x10, 0x00, 0x98, 0x00, 0x1c, 0x01, 0x5f, 0x01, 0x5f,
@@ -131,10 +138,21 @@ uint16_t getTopKey() {
 
 // Interrupt driven routine to send waveform to DAC
 void sampleISR() {
+	static uint8_t bufferSample = 0; // up to 255;
+	if (bufferSample = 220) {
+		bufferSample = 0;
+		bufferAactive = !bufferAactive;
+	}
+	if (bufferAactive) {
+		analogWrite(OUTR_PIN, bufferA[bufferSample]);
+	} else {
+		analogWrite(OUTR_PIN, bufferB[bufferSample]);
+	}
 	static int32_t phaseAcc = 0;
 	phaseAcc += currentStepSize;
 	int32_t Vout = phaseAcc >> (32 - K3.getRotation() / 2); // Volume range from (>> 32) to (>> 24), range of 8
 	analogWrite(OUTR_PIN, Vout + 128);
+	bufferSample++;
 }
 
 void CAN_RX_ISR() {
@@ -142,6 +160,26 @@ void CAN_RX_ISR() {
 	uint32_t ISR_rxID;
 	CAN_RX(ISR_rxID, ISR_RX_Message);
 	xQueueSendFromISR(msgInQ, ISR_RX_Message, nullptr);
+}
+
+void generateWaveformBufferTask(void *pvParameters) {
+	const TickType_t xFrequency = 50 / portTICK_PERIOD_MS;
+	TickType_t xLastWakeTime = xTaskGetTickCount();
+	static int32_t waveformBuffers[85][220] = {0};
+	while (1) {
+		vTaskDelayUntil(&xLastWakeTime, xFrequency);
+		// Generate waveforms and write to buffers
+		int32_t nextBuffer[220] = {0};
+		// Combine waveforms into nextBuffer waveform
+		// Write waveform to inactive buffer
+		for (uint8_t i = 0; i < 220; i++) {
+			if (bufferAactive) {
+				bufferB[i] = nextBuffer[i];
+			} else {
+				bufferA[i] = nextBuffer[i];
+			}
+		}
+	}
 }
 
 void decodeTask(void *pvParameters) {
@@ -190,6 +228,9 @@ void scanKeysTask(void *pvParameters) {
 			}
 		}
 		currentStepSize = stepSizes[getTopKey()]; // Atomic Store
+		K0.updateRotation(keyArray[4] & 0x4, keyArray[4] & 0x8);
+		K1.updateRotation(keyArray[4] & 0x1, keyArray[4] & 0x2);
+		K2.updateRotation(keyArray[3] & 0x4, keyArray[3] & 0x8);
 		K3.updateRotation(keyArray[3] & 0x1, keyArray[3] & 0x2);
 	}
 }
@@ -210,20 +251,33 @@ void displayUpdateTask(void *pvParameters) {
 				strcat(currentKeys, " ");
 			}
 		}
-		u8g2.drawStr(2, 10, currentKeys); // Print the current keys
-		digitalToggle(LED_BUILTIN);
+		u8g2.drawStr(2, 10, currentKeys); // Print the currently pressed keys
 		u8g2.setCursor(2, 20);
 		for (uint8_t i = 0; i < 7; i++) {
 			u8g2.print(keyArray[i], HEX);
-		}
-		// u8g2.drawXBM(118, 0, 10, 10, icon_bits);
-		u8g2.setCursor(100, 10);
+		};
+		u8g2.setCursor(100, 10); // Debug print of received CAN message
 		u8g2.print((char)RX_Message[0]);
 		u8g2.print(RX_Message[1]);
 		u8g2.print(RX_Message[2], HEX);
-		u8g2.setCursor(2, 30);
+
+		// Draw currently selected waveform above knob 1
+		u8g2.drawXBM(38, 22, 13, 9, waveforms[K1.getRotation()]);
+
+		// Print Send / Receive State above knob 2
+		if (K2.getRotation()) {
+			u8g2.drawStr(70, 30, "SEND");
+		} else {
+			u8g2.drawStr(70, 30, "RECV");
+		}
+
+		// Print currently selected volume level above knob 3
+		u8g2.setCursor(110, 30);
+		u8g2.print("V:");
 		u8g2.print(K3.getRotation());
+
 		u8g2.sendBuffer(); // transfer internal memory to the display
+		digitalToggle(LED_BUILTIN);
 	}
 }
 
@@ -246,6 +300,7 @@ void setup() {
 	pinMode(JOYY_PIN, INPUT);
 #pragma endregion
 #pragma region Variables Setup
+	isMainSynth = true;
 	octave = 4;
 #pragma endregion
 #pragma region Display Setup
