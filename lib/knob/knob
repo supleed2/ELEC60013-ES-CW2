@@ -3,14 +3,18 @@
 
 class Knob {
   private:
-	int rotation;
-	int minimum, maximum;
+	int rotation, rotationInternal;
+	int minimum, maximum, previousRotation;
 	bool A, B;
-	bool rotPlusOnePrev, rotMinOnePrev;
+	enum PrevRot {
+		NONE,
+		CW,
+		ACW,
+	};
 
   public:
-	Knob(int minimum, int max);
-	Knob(int minimum, int max, int initialRotation);
+	Knob(int minimum, int maximum, int initialRotation);
+	Knob(int minimum, int maximum) : Knob(minimum, maximum, minimum) {} // Delegate to full constructor, using minimum as initial rotation
 
 	int getRotation();
 
