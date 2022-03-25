@@ -20,6 +20,8 @@ std::atomic<uint8_t> selectedWaveform;
 std::atomic<int> latestKey;
 std::atomic<int8_t> volume;
 std::atomic<bool> volumeFiner;
+std::atomic<bool> handshakeEastOut;
+std::atomic<bool> handshakeWestOut;
 int8_t volumeHistory = 0;
 QueueHandle_t msgInQ;
 std::atomic<bool> bufferAactive;
@@ -134,12 +136,13 @@ uint8_t readCols() {
 	return row;
 }
 
-// Set multiplexer bits to select row
-void setRow(const uint8_t rowIdx) {
+// Set multiplexer bits to select row, and set output from multiplexer
+void setRow(const uint8_t rowIdx, const bool value) {
 	digitalWrite(REN_PIN, LOW);
 	digitalWrite(RA0_PIN, rowIdx & 0x01);
 	digitalWrite(RA1_PIN, rowIdx & 0x02);
 	digitalWrite(RA2_PIN, rowIdx & 0x04);
+	digitalWrite(OUT_PIN, value);
 	digitalWrite(REN_PIN, HIGH);
 }
 
@@ -176,7 +179,7 @@ void sampleISR() {
 	analogWrite(OUTR_PIN, Vout + 128);
 }
 
-//
+// Interrupt service routine that copies received CAN messages to (larger) internal buffer when available
 void CAN_RX_ISR() {
 	uint8_t ISR_RX_Message[8];
 	uint32_t ISR_rxID;
@@ -207,7 +210,7 @@ void decodeTask(void *pvParameters) {
 	}
 }
 
-//
+// Function to send a CAN message containing a changed key and it's new state
 void keyChangedSendTXMessage(uint8_t octave, uint8_t key, bool pressed) {
 	uint8_t TX_Message[8] = {0};
 	if (pressed) {
@@ -224,7 +227,7 @@ void keyChangedSendTXMessage(uint8_t octave, uint8_t key, bool pressed) {
 	}
 }
 
-//
+// Function to send CAN message instructing other synths to change to sending mode
 void announceMainSynth() {
 	uint8_t TX_Message[8] = {0};
 	TX_Message[0] = 0x4D; // "M"
@@ -238,7 +241,21 @@ void scanKeysTask(void *pvParameters) {
 	while (1) {
 		vTaskDelayUntil(&xLastWakeTime, xFrequency);
 		for (uint8_t i = 0; i < 7; i++) {
-			setRow(i);
+			switch (i) {
+				case 3: // Display Power
+				case 4: // Display Reset, active low
+					setRow(i, HIGH);
+					break;
+				case 5: // Handshake Output West
+					setRow(i, handshakeWestOut);
+					break;
+				case 6: // Handshake Output East
+					setRow(i, handshakeEastOut);
+					break;
+				default: // Unimplemented
+					setRow(i, LOW);
+					break;
+			}
 			uint8_t oldRow = keyArray[i];
 			delayMicroseconds(3);
 			uint8_t newRow = readCols();
@@ -351,6 +368,8 @@ void setup() {
 #pragma region Variables Setup
 	isMainSynth = true;
 	octave = 4;
+	handshakeWestOut = false;
+	handshakeEastOut = true;
 #pragma endregion
 #pragma region Display Setup
 	setOutMuxBit(DRST_BIT, LOW); // Assert display logic reset
@@ -366,7 +385,7 @@ void setup() {
 #pragma region CAN Setup
 	msgInQ = xQueueCreate(36, 8);
 	CAN_Init(false);
-	setCANFilter(0x123, 0x7ff);
+	setCANFilter(canID, 0x7fc); // Mask last 2 bits
 	CAN_RegisterRX_ISR(CAN_RX_ISR);
 	CAN_Start();
 #pragma endregion
