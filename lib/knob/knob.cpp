@@ -1,13 +1,13 @@
 #include <knob>
 
-Knob::Knob(int minimum, int maximum) {
+Knob::Knob(int minimum, int maximum, int initialRotation) {
 	Knob::minimum = minimum;
 	Knob::maximum = maximum;
 	Knob::A = false;
 	Knob::B = false;
-	Knob::rotPlusOnePrev = false;
-	Knob::rotMinOnePrev = false;
-	Knob::rotation = 0;
+	Knob::previousRotation = NONE;
+	Knob::rotation = initialRotation;
+	Knob::rotationInternal = initialRotation;
 }
 
 int Knob::getRotation() {
@@ -15,34 +15,61 @@ int Knob::getRotation() {
 };
 
 void Knob::updateRotation(bool ANew, bool BNew) {
-	bool rotPlusOneNew = (!B && !A && !BNew && ANew) ||
-						 (!B && A && BNew && ANew) ||
-						 (B && !A && !BNew && !ANew) ||
-						 (B && A && BNew && !ANew);
+	if (A == ANew && B == BNew)
+		return; // No change, do not update values
 
-	bool rotMinOneNew = (!B && !A && BNew && !ANew) ||
-						(!B && A && !BNew && !ANew) ||
-						(B && !A && BNew && ANew) ||
-						(B && A && !BNew && ANew);
+	bool fullstep = (BNew && ANew) || (!BNew && !ANew);
 
-	bool impossibleState = (!B && !A && BNew && ANew) ||
-						   (!B && A && BNew && !ANew) ||
-						   (B && !A && !BNew && ANew) ||
-						   (B && A && !BNew && !ANew);
+	bool cwRot = (!B && !A && !BNew && ANew) ||
+				 (!B && A && BNew && ANew) ||
+				 (B && !A && !BNew && !ANew) ||
+				 (B && A && BNew && !ANew);
 
-	if (rotPlusOneNew || (impossibleState && rotPlusOnePrev))
-		rotation += 2;
-	if (rotMinOneNew || (impossibleState && rotMinOnePrev))
-		rotation -= 2;
-	if (rotation < minimum)
-		rotation = minimum;
-	if (rotation > maximum)
-		rotation = maximum;
+	bool acwRot = (!B && !A && BNew && !ANew) ||
+				  (!B && A && !BNew && !ANew) ||
+				  (B && !A && BNew && ANew) ||
+				  (B && A && !BNew && ANew);
 
+	bool impossible = (!B && !A && BNew && ANew) ||
+					  (!B && A && BNew && !ANew) ||
+					  (B && !A && !BNew && ANew) ||
+					  (B && A && !BNew && !ANew);
+
+	if (cwRot) {
+		if (previousRotation == CW && fullstep) {
+			rotationInternal++;
+		} else if (previousRotation == ACW) {
+			previousRotation = NONE;
+		} else {
+			previousRotation = CW;
+		}
+	} else if (acwRot) {
+		if (previousRotation == ACW && fullstep) {
+			rotationInternal--;
+		} else if (previousRotation == CW) {
+			previousRotation = NONE;
+		} else {
+			previousRotation = ACW;
+		}
+	} else if (impossible) {
+		if (fullstep) {
+			switch (previousRotation) {
+				case NONE: // Step skipped and no previous direction
+					break;
+				case CW:
+					rotationInternal++;
+					break;
+				case ACW:
+					rotationInternal--;
+					break;
+			}
+		}
+	}
 	A = ANew;
 	B = BNew;
-	if (!impossibleState) {
-		rotPlusOnePrev = rotPlusOneNew;
-		rotMinOnePrev = rotMinOneNew;
-	}
+	if (rotationInternal < minimum)
+		rotationInternal = minimum;
+	if (rotationInternal > maximum)
+		rotationInternal = maximum;
+	rotation = rotationInternal;
 }
