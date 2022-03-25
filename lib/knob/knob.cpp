@@ -73,3 +73,13 @@ void Knob::updateRotation(bool ANew, bool BNew) {
 		rotationInternal = maximum;
 	rotation = rotationInternal;
 }
+
+void Knob::changeLimitsVolume(int newMinimum, int newMaximum) {
+    if(newMaximum>maximum){
+        rotation = rotation<<1;
+    }else if(newMaximum<maximum){
+        rotation = rotation>>1;
+    }else{}
+    minimum = newMinimum;
+    maximum = newMaximum;
+};
