@@ -14,6 +14,11 @@ int Knob::getRotation() {
 	return Knob::rotation;
 };
 
+void Knob::setRotation(int newRotation) {
+	rotation = newRotation;
+	rotationInternal = newRotation;
+};
+
 void Knob::updateRotation(bool ANew, bool BNew) {
 	if (A == ANew && B == BNew)
 		return; // No change, do not update values
@@ -75,11 +80,12 @@ void Knob::updateRotation(bool ANew, bool BNew) {
 }
 
 void Knob::changeLimitsVolume(int newMinimum, int newMaximum) {
-    if(newMaximum>maximum){
-        rotation = rotation<<1;
-    }else if(newMaximum<maximum){
-        rotation = rotation>>1;
-    }else{}
-    minimum = newMinimum;
-    maximum = newMaximum;
+	if (newMaximum > maximum) {
+		rotation = rotation << 1;
+	} else if (newMaximum < maximum) {
+		rotation = rotation >> 1;
+	} else {
+	}
+	minimum = newMinimum;
+	maximum = newMaximum;
 };

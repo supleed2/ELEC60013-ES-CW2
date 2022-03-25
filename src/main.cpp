@@ -182,7 +182,8 @@ void CAN_RX_ISR() {
 	uint8_t ISR_RX_Message[8];
 	uint32_t ISR_rxID;
 	CAN_RX(ISR_rxID, ISR_RX_Message);
-	xQueueSendFromISR(msgInQ, ISR_RX_Message, nullptr);
+	if (isMainSynth)
+		xQueueSendFromISR(msgInQ, ISR_RX_Message, nullptr);
 }
 
 // Task to update activeNotes[] and currentStepSize based on received CAN message
@@ -193,12 +194,15 @@ void decodeTask(void *pvParameters) {
 			activeNotes[(RX_Message[1] - 1) * 12 + RX_Message[2]] = true;
 			latestKey = (RX_Message[1] - 1) * 12 + RX_Message[2];
 			currentStepSize = stepSizes[latestKey];
-		} else { // Released
+		} else if (RX_Message[0] == 0x52) { // Released
 			activeNotes[(RX_Message[1] - 1) * 12 + RX_Message[2]] = false;
 			if (latestKey == (RX_Message[1] - 1) * 12 + RX_Message[2]) {
 				latestKey = 0;
 				currentStepSize = stepSizes[latestKey]; // Atomic Store
 			}
+		} else if (RX_Message[0] == 0x4D) { // Main Synth Announce
+			isMainSynth = false;
+			K2.setRotation(1);
 		}
 	}
 }
@@ -213,6 +217,17 @@ void keyChangedSendTXMessage(uint8_t octave, uint8_t key, bool pressed) {
 	}
 	TX_Message[1] = octave;
 	TX_Message[2] = key;
+	if (isMainSynth) {
+		xQueueSend(msgInQ, TX_Message, 0);
+	} else {
+		CAN_TX(canID, TX_Message);
+	}
+}
+
+//
+void announceMainSynth() {
+	uint8_t TX_Message[8] = {0};
+	TX_Message[0] = 0x4D; // "M"
 	CAN_TX(canID, TX_Message);
 }
 
@@ -239,6 +254,9 @@ void scanKeysTask(void *pvParameters) {
 					}
 				}
 			}
+		}
+		if (keyArray[5] & 0x1 && isMainSynth) {
+			announceMainSynth();
 		}
 		if (volumeFiner) {
 			K3.changeLimitsVolume(0, 10);
@@ -294,10 +312,16 @@ void displayUpdateTask(void *pvParameters) {
 
 		// Print volume indicator above knob 3
 		if (!volumeFiner) {
-			u8g2.drawXBM(116, 22, 13, 9, volumes[volume]);
+			u8g2.drawXBM(112, 22, 13, 9, volumes[volume]);
 		} else {
 			u8g2.setCursor(117, 30);
 			u8g2.print(volume);
+		}
+
+		if (!isMainSynth) {
+			u8g2.drawHLine(1, 6, 26);
+			u8g2.drawHLine(36, 26, 18);
+			u8g2.drawHLine(110, 26, 16);
 		}
 
 		u8g2.sendBuffer();			// transfer internal memory to the display
@@ -340,7 +364,7 @@ void setup() {
 #pragma endregion
 #pragma region CAN Setup
 	msgInQ = xQueueCreate(36, 8);
-	CAN_Init(true);
+	CAN_Init(false);
 	setCANFilter(0x123, 0x7ff);
 	CAN_RegisterRX_ISR(CAN_RX_ISR);
 	CAN_Start();
