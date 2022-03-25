@@ -12,12 +12,13 @@ const uint32_t interval = 10;		 // Display update interval
 const uint32_t samplingRate = 44100; // Sampling rate
 const uint32_t canID = 0x123;
 // Variables
-std::atomic<int32_t> currentStepSize;
+std::atomic<int32_t> currentStepSize[12];
 std::atomic<uint8_t> keyArray[7];
 std::atomic<uint8_t> octave;
 std::atomic<int8_t> volume;
 std::atomic<bool> volumeFiner;
 std::atomic<int8_t> wave;
+std::atomic<uint16_t> pressedKeys;
 int8_t volumeHistory = 0;
 QueueHandle_t msgInQ;
 uint8_t RX_Message[8] = {0};
@@ -27,12 +28,16 @@ Knob K0(2,14,8); 	//Octave encoder
 Knob K1(0,6); 		//Waveform encoder
 Knob K3(0,10);		//Volume encoder
 // Program Specific Structures
-typedef struct{
-	int32_t stepSize;
-	std::string note;
-} Note;
-const Note notes[] = {
-	{0, "None"}, {3185014, "C1"}, {3374405, "C1#"}, {3575058, "D1"}, {3787642, "D1#"}, {4012867, "E1"}, {4251484, "F1"}, {4504291, "F1#"}, {4772130, "G1"}, {5055895, "G1#"}, {5356535, "A1"}, {5675051, "A1#"}, {6012507, "B1"}, {6370029, "C2"}, {6748811, "C2#"}, {7150116, "D2"}, {7575284, "D2#"}, {8025734, "E2"}, {8502969, "F2"}, {9008582, "F2#"}, {9544260, "G2"}, {10111791, "G2#"}, {10713070, "A2"}, {11350102, "A2#"}, {12025014, "B2"}, {12740059, "C3"}, {13497622, "C3#"}, {14300233, "D3"}, {15150569, "D3#"}, {16051469, "E3"}, {17005939, "F3"}, {18017164, "F3#"}, {19088521, "G3"}, {20223583, "G3#"}, {21426140, "A3"}, {22700205, "A3#"}, {24050029, "B3"}, {25480118, "C4"}, {26995245, "C4#"}, {28600466, "D4"}, {30301138, "D4#"}, {32102938, "E4"}, {34011878, "F4"}, {36034329, "F4#"}, {38177042, "G4"}, {40447167, "G4#"}, {42852281, "A4"}, {45400410, "A4#"}, {48100059, "B4"}, {50960237, "C5"}, {53990491, "C5#"}, {57200933, "D5"}, {60602277, "D5#"}, {64205876, "E5"}, {68023756, "F5"}, {72068659, "F5#"}, {76354085, "G5"}, {80894335, "G5#"}, {85704562, "A5"}, {90800821, "A5#"}, {96200119, "B5"}, {101920475, "C6"}, {107980982, "C6#"}, {114401866, "D6"}, {121204555, "D6#"}, {128411753, "E6"}, {136047513, "F6"}, {144137319, "F6#"}, {152708170, "G6"}, {161788670, "G6#"}, {171409125, "A6"}, {181601642, "A6#"}, {192400238, "B6"}, {203840951, "C7"}, {215961965, "C7#"}, {228803732, "D7"}, {242409110, "D7#"}, {256823506, "E7"}, {272095026, "F7"}, {288274638, "F7#"}, {305416340, "G7"}, {323577341, "G7#"}, {342818251, "A7"}, {363203285, "A7#"}, {384800476, "B7"}};
+const int32_t notes[8][12] = {
+	{0},
+	{3185014, 3374405, 3575058, 3787642, 4012867, 4251484, 4504291, 4772130, 5055895, 5356535, 5675051, 6012507},
+	{6370029, 6748811, 7150116, 7575284, 8025734, 8502969, 9008582, 9544260, 10111791, 10713070, 11350102, 12025014},
+	{12740059, 13497622, 14300233, 15150569, 16051469, 17005939, 18017164, 19088521, 20223583, 21426140, 22700205, 24050029},
+	{25480118, 26995245, 28600466, 30301138, 32102938, 34011878, 36034329, 38177042, 40447167, 42852281, 45400410, 48100059},
+	{50960237, 53990491, 57200933, 60602277, 64205876, 68023756, 72068659, 76354085, 80894335, 85704562, 90800821, 96200119},
+	{101920475, 107980982, 114401866, 121204555, 128411753, 136047513, 144137319, 152708170, 161788670, 171409125, 181601642, 192400238},
+	{203840951, 215961965, 228803732, 242409110, 256823506, 272095026, 288274638, 305416340, 323577341, 342818251, 363203285, 384800476}
+};
 enum waveform {
 	SQUARE = 0,
 	SAWTOOTH,
@@ -159,11 +164,59 @@ uint16_t getTopKey() {
 	for (uint8_t i = 0; i < 3; i++) {
 		for (uint8_t j = 0; j < 4; j++) {
 			if (keyArray[i] & (0x1 << j)) {
-				topKey = (octave - 1) * 12 + i * 4 + j + 1;
+				topKey =  i * 4 + j;
 			}
 		}
 	}
 	return topKey;
+}
+
+// Returns integer where each bit represents a separate key (1 = pressed, 0 = not pressed)
+uint16_t getKeys() {
+	uint16_t keys = 0;
+	for (uint8_t i = 0; i < 3; i++) {
+		for (uint8_t j = 0; j < 4; j++) {
+			if (keyArray[i] & (0x1 << j)) {
+				keys += 0x1 << (j+i*4);
+			}
+		}
+	}
+	return keys;
+}
+
+int8_t getKeyCount() {
+	uint8_t keyCount = 0;
+	for (uint8_t i = 0; i < 3; i++) {
+		for (uint8_t j = 0; j < 4; j++) {
+			if (keyArray[i] & (0x1 << j)) {
+				keyCount += 1;
+			}
+		}
+	}
+	return keyCount;
+}
+
+int32_t mixInputs(int32_t *accs) {
+	int8_t keyCount = getKeyCount();
+	int32_t output = 0;
+	if(keyCount!=0){
+		for(int8_t i = 0; i<12; i++){
+			if(wave==SAWTOOTH){
+				output += (*(accs+i)/keyCount) >> 16;
+			}else if(wave==SQUARE){
+				if(*(accs+i)<0){
+					output += 0x8000/keyCount;
+				}else{
+					output += 0;
+				}
+			}else if(wave==TRIANGLE){
+				//TODO
+			}else if(wave==SINE){
+				//TODO
+			}
+		}
+	}
+	return output;
 }
 
 // Interrupt driven routine to send waveform to DAC
@@ -184,6 +237,7 @@ void sampleISR(){
 	}else if(wave==SINE){
 		Vout = (sineLookUpTable[(uint32_t)phaseAcc>>24]-128)<<8;
 	}
+	int32_t Vout = mixInputs(phaseAcc);
 	Vout = scaleVolume(Vout);
 	analogWrite(OUTR_PIN, Vout + 128);
 }
@@ -245,7 +299,7 @@ void scanKeysTask(void *pvParameters) {
 		}else{
 			K3.changeLimitsVolume(0,10);
 		};
-		currentStepSize = notes[getTopKey()].stepSize; // Atomic Store
+		pressedKeys = getKeys();
 		K0.updateRotation(keyArray[4] & 0x4, keyArray[4] & 0x8);
 		octave = K0.getRotation()/2;
 		K1.updateRotation(keyArray[4] & 0x1, keyArray[4] & 0x2);
@@ -268,7 +322,7 @@ void displayUpdateTask(void *pvParameters) {
 		u8g2.clearBuffer();					  // clear the internal memory
 		u8g2.setFont(u8g2_font_profont12_mf); // choose a suitable font
 		uint16_t key = getTopKey();
-		u8g2.drawStr(2, 10, notes[key].note.c_str()); // Print the current key
+		//u8g2.drawStr(2, 10, notes[key].note.c_str()); // Print the current key
 		digitalToggle(LED_BUILTIN);
 		u8g2.setCursor(2, 20);
 		for (uint8_t i = 0; i < 7; i++) {
@@ -278,6 +332,9 @@ void displayUpdateTask(void *pvParameters) {
 		u8g2.print((char)RX_Message[0]);
 		u8g2.print(RX_Message[1]);
 		u8g2.print(RX_Message[2], HEX);
+
+		u8g2.setCursor(70, 30);
+		u8g2.print(getKeys());
 
 		// Print waveform icon
 		int K1_rot = K1.getRotation();
