@@ -9,31 +9,29 @@
 #pragma region Globals(Config values, Variables, Objects, Types, etc.)
 // Config values
 const uint32_t interval = 10;		 // Display update interval
-const uint8_t octave = 4;			 // Octave to start on
-const uint32_t samplingRate = 44100; // Sampling rate
+const uint32_t samplingRate = 22000; // Sampling rate
 const uint32_t canID = 0x123;
 // Variables
 std::atomic<int32_t> currentStepSize;
 std::atomic<uint8_t> keyArray[7];
+std::atomic<uint8_t> octave;
+std::atomic<uint8_t> selectedWaveform;
 QueueHandle_t msgInQ;
 uint8_t RX_Message[8] = {0};
 // Objects
 U8G2_SSD1305_128X32_NONAME_F_HW_I2C u8g2(U8G2_R0); // Display driver object
 Knob K3 = Knob(0, 16);							   // Knob driver object
 // Program Specific Structures
-typedef struct {
-	int32_t stepSize;
-	std::string note;
-} Note;
-const Note notes[] = {
-	{0, "None"}, {3185014, "C1"}, {3374405, "C1#"}, {3575058, "D1"}, {3787642, "D1#"}, {4012867, "E1"}, {4251484, "F1"}, {4504291, "F1#"}, {4772130, "G1"}, {5055895, "G1#"}, {5356535, "A1"}, {5675051, "A1#"}, {6012507, "B1"}, {6370029, "C2"}, {6748811, "C2#"}, {7150116, "D2"}, {7575284, "D2#"}, {8025734, "E2"}, {8502969, "F2"}, {9008582, "F2#"}, {9544260, "G2"}, {10111791, "G2#"}, {10713070, "A2"}, {11350102, "A2#"}, {12025014, "B2"}, {12740059, "C3"}, {13497622, "C3#"}, {14300233, "D3"}, {15150569, "D3#"}, {16051469, "E3"}, {17005939, "F3"}, {18017164, "F3#"}, {19088521, "G3"}, {20223583, "G3#"}, {21426140, "A3"}, {22700205, "A3#"}, {24050029, "B3"}, {25480118, "C4"}, {26995245, "C4#"}, {28600466, "D4"}, {30301138, "D4#"}, {32102938, "E4"}, {34011878, "F4"}, {36034329, "F4#"}, {38177042, "G4"}, {40447167, "G4#"}, {42852281, "A4"}, {45400410, "A4#"}, {48100059, "B4"}, {50960237, "C5"}, {53990491, "C5#"}, {57200933, "D5"}, {60602277, "D5#"}, {64205876, "E5"}, {68023756, "F5"}, {72068659, "F5#"}, {76354085, "G5"}, {80894335, "G5#"}, {85704562, "A5"}, {90800821, "A5#"}, {96200119, "B5"}, {101920475, "C6"}, {107980982, "C6#"}, {114401866, "D6"}, {121204555, "D6#"}, {128411753, "E6"}, {136047513, "F6"}, {144137319, "F6#"}, {152708170, "G6"}, {161788670, "G6#"}, {171409125, "A6"}, {181601642, "A6#"}, {192400238, "B6"}, {203840951, "C7"}, {215961965, "C7#"}, {228803732, "D7"}, {242409110, "D7#"}, {256823506, "E7"}, {272095026, "F7"}, {288274638, "F7#"}, {305416340, "G7"}, {323577341, "G7#"}, {342818251, "A7"}, {363203285, "A7#"}, {384800476, "B7"}};
+const int32_t stepSizes[85] = {0, 6384507, 6764150, 7166367, 7592501, 8043975, 8522295, 9029057, 9565952, 10134773, 10737418, 11375898, 12052344, 12769014, 13528299, 14332734, 15185002, 16087950, 17044589, 18058113, 19131904, 20269547, 21474836, 22751797, 24104689, 25538028, 27056599, 28665468, 30370005, 32175899, 34089178, 36116226, 38263809, 40539093, 42949673, 45503593, 48209378, 51076057, 54113197, 57330935, 60740010, 64351799, 68178356, 72232452, 76527617, 81078186, 85899346, 91007187, 96418756, 102152113, 108226394, 114661870, 121480020, 128703598, 136356712, 144464904, 153055234, 162156372, 171798692, 182014374, 192837512, 204304227, 216452788, 229323741, 242960040, 257407196, 272713424, 288929808, 306110469, 324312744, 343597384, 364028747, 385675023, 408608453, 432905576, 458647482, 485920080, 514814392, 545426848, 577859616, 612220937, 648625489, 687194767, 728057495, 771350046};
+const char *notes[85] = {"None", "C1", "C1#", "D1", "D1#", "E1", "F1", "F1#", "G1", "G1#", "A1", "A1#", "B1", "C2", "C2#", "D2", "D2#", "E2", "F2", "F2#", "G2", "G2#", "A2", "A2#", "B2", "C3", "C3#", "D3", "D3#", "E3", "F3", "F3#", "G3", "G3#", "A3", "A3#", "B3", "C4", "C4#", "D4", "D4#", "E4", "F4", "F4#", "G4", "G4#", "A4", "A4#", "B4", "C5", "C5#", "D5", "D5#", "E5", "F5", "F5#", "G5", "G5#", "A5", "A5#", "B5", "C6", "C6#", "D6", "D6#", "E6", "F6", "F6#", "G6", "G6#", "A6", "A6#", "B6", "C7", "C7#", "D7", "D7#", "E7", "F7", "F7#", "G7", "G7#", "A7", "A7#", "B7"};
+std::atomic<bool> activeNotes[85] = {{0}};
 enum waveform {
 	SQUARE = 0,
 	SAWTOOTH,
 	TRIANGLE,
 	SINE
 };
-const unsigned char waveforms[4][18] = {
+const unsigned char waveformIcons[4][18] = {
 	{0x7f, 0x10, 0x41, 0x10, 0x41, 0x10, 0x41, 0x10, 0x41,
 	 0x10, 0x41, 0x10, 0x41, 0x10, 0x41, 0x10, 0xc1, 0x1f}, // Square Wave
 	{0x70, 0x10, 0x58, 0x18, 0x48, 0x08, 0x4c, 0x0c, 0x44,
@@ -43,7 +41,7 @@ const unsigned char waveforms[4][18] = {
 	{0x1c, 0x00, 0x36, 0x00, 0x22, 0x00, 0x63, 0x00, 0x41,
 	 0x10, 0xc0, 0x18, 0x80, 0x08, 0x80, 0x0d, 0x00, 0x07} // Sine Wave
 };
-const unsigned char volumes[6][18] = {
+const unsigned char volumeIcons[6][18] = {
 	{0x10, 0x02, 0x98, 0x04, 0x1c, 0x05, 0x5f, 0x09, 0x5f,
 	 0x09, 0x5f, 0x09, 0x1c, 0x05, 0x98, 0x04, 0x10, 0x02}, // volume max
 	{0x10, 0x00, 0x98, 0x00, 0x1c, 0x01, 0x5f, 0x01, 0x5f,
@@ -118,7 +116,7 @@ void setRow(const uint8_t rowIdx) {
 	digitalWrite(REN_PIN, HIGH);
 }
 
-// Returns key value (as notes[] index) of highest currently pressed key
+// Returns key value (as stepSizes[] index) of highest currently pressed key
 uint16_t getTopKey() {
 	uint16_t topKey = 0;
 	for (uint8_t i = 0; i < 3; i++) {
@@ -150,9 +148,9 @@ void decodeTask(void *pvParameters) {
 	while (1) {
 		xQueueReceive(msgInQ, RX_Message, portMAX_DELAY);
 		if (RX_Message[0] == 0x50) { // Pressed
-			currentStepSize = notes[(RX_Message[1] - 1) * 12 + RX_Message[2]].stepSize;
+			activeNotes[(RX_Message[1] - 1) * 12 + RX_Message[2]] = true;
 		} else { // Released
-			currentStepSize = 0;
+			activeNotes[(RX_Message[1] - 1) * 12 + RX_Message[2]] = false;
 		}
 	}
 }
@@ -191,7 +189,7 @@ void scanKeysTask(void *pvParameters) {
 				}
 			}
 		}
-		currentStepSize = notes[getTopKey()].stepSize; // Atomic Store
+		currentStepSize = stepSizes[getTopKey()]; // Atomic Store
 		K3.updateRotation(keyArray[3] & 0x1, keyArray[3] & 0x2);
 	}
 }
@@ -203,11 +201,16 @@ void displayUpdateTask(void *pvParameters) {
 	while (1) {
 		vTaskDelayUntil(&xLastWakeTime, xFrequency);
 		uint32_t rxID;
-
 		u8g2.clearBuffer();					  // clear the internal memory
 		u8g2.setFont(u8g2_font_profont12_mf); // choose a suitable font
-		uint16_t key = getTopKey();
-		u8g2.drawStr(2, 10, notes[key].note.c_str()); // Print the current key
+		char currentKeys[64] = {0};
+		for (uint8_t i = 0; i < 85; i++) {
+			if (activeNotes[i]) {
+				strcat(currentKeys, notes[i]);
+				strcat(currentKeys, " ");
+			}
+		}
+		u8g2.drawStr(2, 10, currentKeys); // Print the current keys
 		digitalToggle(LED_BUILTIN);
 		u8g2.setCursor(2, 20);
 		for (uint8_t i = 0; i < 7; i++) {
@@ -224,6 +227,7 @@ void displayUpdateTask(void *pvParameters) {
 	}
 }
 
+// Arduino framework setup function, sets up Pins, Display, UART, CAN and Tasks
 void setup() {
 #pragma region Pin Setup
 	pinMode(RA0_PIN, OUTPUT);
@@ -240,6 +244,9 @@ void setup() {
 	pinMode(C3_PIN, INPUT);
 	pinMode(JOYX_PIN, INPUT);
 	pinMode(JOYY_PIN, INPUT);
+#pragma endregion
+#pragma region Variables Setup
+	octave = 4;
 #pragma endregion
 #pragma region Display Setup
 	setOutMuxBit(DRST_BIT, LOW); // Assert display logic reset
@@ -267,13 +274,22 @@ void setup() {
 	sampleTimer->resume();
 	TaskHandle_t scanKeysHandle = nullptr;
 	TaskHandle_t displayUpdateHandle = nullptr;
+	TaskHandle_t decodeHandle = nullptr;
 	xTaskCreate(
 		scanKeysTask,	// Function that implements the task
 		"scanKeys",		// Text name for the task
 		64,				// Stack size in words, not bytes
 		nullptr,		// Parameter passed into the task
-		2,				// Task priority
+		3,				// Task priority
 		&scanKeysHandle // Pointer to store the task handle
+	);
+	xTaskCreate(
+		decodeTask,	  // Function that implements the task
+		"decode",	  // Text name for the task
+		256,		  // Stack size in words, not bytes
+		nullptr,	  // Parameter passed into the task
+		2,			  // Task priority
+		&decodeHandle // Pointer to store the task handle
 	);
 	xTaskCreate(
 		displayUpdateTask,	 // Function that implements the task
