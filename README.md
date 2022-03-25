@@ -139,6 +139,8 @@ It was decided to use C++ `std::atomic`, as it is easier to use and implement, w
 
 `msgInQ` is used as a FIFO buffer for CAN messages, to supplement the small buffer of the CAN system and allow for more messages to be retained, increasing the required minimum initiation time.
 
+The below figure displays a graph of the dependencies between the various tasks. It can be clearly seen that the dependancies are not cyclical, therefore there is no capability for a deadlock to occur.
+
 ![Dependency Graph](docs/DependencyGraph.png)
 
 ## Analysis of inter-task blocking dependencies
