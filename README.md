@@ -156,11 +156,11 @@ Several advanced features were implemented, including:
 ### Multiple waveforms
 
 Our system implements several waveforms - sawtooth, triangle, sine, & square.
+
 * Sawtooth was implemented first, by incrementing the step size and waiting for overflow to occur, resetting the waveform.
 * Square is implemented by taking the sign of the sign and appropriately scaling to low or high voltage depending on this.
 * Triangle is implemented as a variation of Sawtooth, taking the absolute value of the phase shifting to remove the DC offset and then doubling to restore the original size.
 * Sine is implemented by calling to a look-up table, preestablished with the corresponding value of a sine wave at the relevant point in the input waveform
-
 
 ### User-friendly icons
 
