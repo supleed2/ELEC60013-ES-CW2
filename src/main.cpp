@@ -233,7 +233,7 @@ void announceMainSynth() {
 
 // Task to update keyArray values at a higher priority
 void scanKeysTask(void *pvParameters) {
-	const TickType_t xFrequency = 50 / portTICK_PERIOD_MS;
+	const TickType_t xFrequency = 20 / portTICK_PERIOD_MS;
 	TickType_t xLastWakeTime = xTaskGetTickCount();
 	while (1) {
 		vTaskDelayUntil(&xLastWakeTime, xFrequency);
@@ -259,7 +259,7 @@ void scanKeysTask(void *pvParameters) {
 			announceMainSynth();
 		}
 		if (volumeFiner) {
-			K3.changeLimitsVolume(0, 10);
+			K3.changeLimitsVolume(0, 20);
 		} else {
 			K3.changeLimitsVolume(0, 5);
 		}
@@ -286,10 +286,10 @@ void displayUpdateTask(void *pvParameters) {
 		u8g2.setFont(u8g2_font_profont12_mf);  // choose a suitable font
 		u8g2.drawStr(2, 10, notes[latestKey]); // Print the currently pressed keys
 
-		// u8g2.setCursor(2, 20);
-		// for (uint8_t i = 0; i < 7; i++) {
-		// 	u8g2.print(keyArray[i], HEX);
-		// };
+		u8g2.setCursor(2, 20);
+		for (uint8_t i = 0; i < 7; i++) {
+			u8g2.print(keyArray[i], HEX);
+		};
 		// u8g2.setCursor(100, 10); // Debug print of received CAN message
 		// u8g2.print((char)RX_Message[0]);
 		// u8g2.print(RX_Message[1]);
@@ -322,6 +322,7 @@ void displayUpdateTask(void *pvParameters) {
 			u8g2.drawHLine(1, 6, 26);
 			u8g2.drawHLine(36, 26, 18);
 			u8g2.drawHLine(110, 26, 16);
+			u8g2.drawStr(40, 10, "Secondary Mode");
 		}
 
 		u8g2.sendBuffer();			// transfer internal memory to the display

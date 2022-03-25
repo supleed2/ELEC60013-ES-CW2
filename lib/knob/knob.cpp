@@ -43,7 +43,7 @@ void Knob::updateRotation(bool ANew, bool BNew) {
 	if (cwRot) {
 		if (previousRotation == CW && fullstep) {
 			rotationInternal++;
-		} else if (previousRotation == ACW) {
+		} else if (previousRotation == ACW && fullstep) {
 			previousRotation = NONE;
 		} else {
 			previousRotation = CW;
@@ -51,7 +51,7 @@ void Knob::updateRotation(bool ANew, bool BNew) {
 	} else if (acwRot) {
 		if (previousRotation == ACW && fullstep) {
 			rotationInternal--;
-		} else if (previousRotation == CW) {
+		} else if (previousRotation == CW && fullstep) {
 			previousRotation = NONE;
 		} else {
 			previousRotation = ACW;
