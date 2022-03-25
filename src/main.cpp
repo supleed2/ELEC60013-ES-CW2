@@ -17,6 +17,7 @@ std::atomic<int32_t> currentStepSize;
 std::atomic<uint8_t> keyArray[7];
 std::atomic<uint8_t> octave;
 std::atomic<uint8_t> selectedWaveform;
+std::atomic<int> latestKey;
 QueueHandle_t msgInQ;
 uint8_t RX_Message[8] = {0};
 std::atomic<bool> bufferAactive;
@@ -138,21 +139,10 @@ uint16_t getTopKey() {
 
 // Interrupt driven routine to send waveform to DAC
 void sampleISR() {
-	static uint8_t bufferSample = 0; // up to 255;
-	if (bufferSample = 220) {
-		bufferSample = 0;
-		bufferAactive = !bufferAactive;
-	}
-	if (bufferAactive) {
-		analogWrite(OUTR_PIN, bufferA[bufferSample]);
-	} else {
-		analogWrite(OUTR_PIN, bufferB[bufferSample]);
-	}
 	static int32_t phaseAcc = 0;
 	phaseAcc += currentStepSize;
 	int32_t Vout = phaseAcc >> (32 - K3.getRotation() / 2); // Volume range from (>> 32) to (>> 24), range of 8
 	analogWrite(OUTR_PIN, Vout + 128);
-	bufferSample++;
 }
 
 void CAN_RX_ISR() {
@@ -187,8 +177,14 @@ void decodeTask(void *pvParameters) {
 		xQueueReceive(msgInQ, RX_Message, portMAX_DELAY);
 		if (RX_Message[0] == 0x50) { // Pressed
 			activeNotes[(RX_Message[1] - 1) * 12 + RX_Message[2]] = true;
+			latestKey = (RX_Message[1] - 1) * 12 + RX_Message[2];
+			currentStepSize = stepSizes[latestKey];
 		} else { // Released
 			activeNotes[(RX_Message[1] - 1) * 12 + RX_Message[2]] = false;
+			if (latestKey == (RX_Message[1] - 1) * 12 + RX_Message[2]) {
+				latestKey = 0;
+				currentStepSize = stepSizes[latestKey]; // Atomic Store
+			}
 		}
 	}
 }
@@ -220,14 +216,15 @@ void scanKeysTask(void *pvParameters) {
 				continue;
 			} else {
 				keyArray[i] = newRow;
-				for (uint8_t j = 0; j < 4; j++) {
-					if ((oldRow & (0x1 << j)) ^ (newRow & (0x1 << j))) {
-						keyChangedSendTXMessage(octave, i * 4 + j + 1, newRow & (0x1 << j));
+				if (i < 3) {
+					for (uint8_t j = 0; j < 4; j++) {
+						if ((oldRow & (0x1 << j)) ^ (newRow & (0x1 << j))) {
+							keyChangedSendTXMessage(octave, i * 4 + j + 1, newRow & (0x1 << j));
+						}
 					}
 				}
 			}
 		}
-		currentStepSize = stepSizes[getTopKey()]; // Atomic Store
 		K0.updateRotation(keyArray[4] & 0x4, keyArray[4] & 0x8);
 		K1.updateRotation(keyArray[4] & 0x1, keyArray[4] & 0x2);
 		K2.updateRotation(keyArray[3] & 0x4, keyArray[3] & 0x8);
@@ -266,14 +263,13 @@ void displayUpdateTask(void *pvParameters) {
 
 		// Print Send / Receive State above knob 2
 		if (K2.getRotation()) {
-			u8g2.drawStr(70, 30, "SEND");
+			u8g2.drawStr(74, 30, "SEND");
 		} else {
-			u8g2.drawStr(70, 30, "RECV");
+			u8g2.drawStr(74, 30, "RECV");
 		}
 
 		// Print currently selected volume level above knob 3
-		u8g2.setCursor(110, 30);
-		u8g2.print("V:");
+		u8g2.setCursor(116, 30);
 		u8g2.print(K3.getRotation());
 
 		u8g2.sendBuffer(); // transfer internal memory to the display
