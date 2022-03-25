@@ -22,7 +22,6 @@ std::atomic<int8_t> volume;
 std::atomic<bool> volumeFiner;
 int8_t volumeHistory = 0;
 QueueHandle_t msgInQ;
-uint8_t RX_Message[8] = {0};
 std::atomic<bool> bufferAactive;
 int32_t bufferA[220];
 int32_t bufferB[220];
@@ -188,6 +187,7 @@ void CAN_RX_ISR() {
 
 // Task to update activeNotes[] and currentStepSize based on received CAN message
 void decodeTask(void *pvParameters) {
+	static uint8_t RX_Message[8] = {0};
 	while (1) {
 		xQueueReceive(msgInQ, RX_Message, portMAX_DELAY);
 		if (RX_Message[0] == 0x50) { // Pressed

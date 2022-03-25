@@ -30,6 +30,8 @@ The sytem at hand executes several real-time tasks, including:
 
 **Maximum execution time:** `0.74ms`
 
+**CPU Resource Usage:** `3.68%`
+
 **Priority:** Highest, as obtaining the note, volume and octave is required for playing the sound, transmitting over CAN and displaying on the screen. All other tasks depend on the results obtained from scanning the key matrix.
 
 ### Decode task
@@ -48,6 +50,8 @@ The sytem at hand executes several real-time tasks, including:
 **Minimum initiation time:** The input for `decodeTask()` is a Queue, filled from within `CAN_RX_ISR()`. The resulting minimum initiation time is the size of the queue multiplied by the minimum initiation time of the function that fills the Queue. In this case: `0.7 * 36 = 25.2ms`
 
 **Maximum execution time:** `0.76us`
+
+**CPU Resource Usage:** `0.00304%`
 
 **Priority:** Medium, due to a lower initiation time, compared to scanning the key matrix. Furthermore, in order to receive CAN messages, they had to be transmitted first - which is handled in ```scanKeyTask```.
 
@@ -68,6 +72,8 @@ The sytem at hand executes several real-time tasks, including:
 
 **Maximum execution time:** `17.01ms`
 
+**CPU Resource Usage:** `17.01%`
+
 **Priority:** Lowest, there is no point in updating the display if the current note, volume or octave have not been updated - all of which take place in the scanning key matrix task.
 
 ### Generating the sound
@@ -86,6 +92,8 @@ The sytem at hand executes several real-time tasks, including:
 
 **Maximum execution time:** `12.17us`
 
+**CPU Resource Usage:** `0.27%`
+
 ### Receiving CAN Messages
 
 **Function:** ```CAN_RX_ISR()```  
@@ -100,7 +108,9 @@ The sytem at hand executes several real-time tasks, including:
 
 **Maximum execution time:** Requires a CAN Message to be received from another board, which would need to flood the CAN bus. Maximum execution time of one iteration is likely below the length of a CAN message and not easily quantifiable.
 
-## Critical instant analysis of the rate monotonic scheduler
+**CPU Resource Usage:** Not quantifiable as the execution time could not be measured.
+
+## Critical Instant Analysis & Total CPU Usage
 
 From the minimum initiation and maximum execution times obtained in the last section, the critical analysis is calculated using the formula provided in the lecture notes. The lowest priority task is updating the display. The minimum initiation and maximum execution time are summarised below, in ascending order:
 
@@ -112,25 +122,48 @@ From the minimum initiation and maximum execution times obtained in the last sec
 
 Therefore, total latency is slightly over 23.07ms. The exact latency could not be calculated, as the exact worst case execution time of CAN_RX_ISR is not known. However, as the specified latency is less than 100ms, the schedule will work.
 
-## CPU Resource Usage
-
-TO BE ADDED - After system is completed; see [this](https://edstem.org/us/courses/19499/discussion/1300057) link
+The total CPU usage is calculated by dividing the total latency by the highest initiation time. In this case the CPU usage is ~25%.
 
 ## Shared data structures
 
-Shared data structures:
+* `currentStepSize`, safe access guaranteed using `std::atomic<uint32_t>`, stores the step size of the most recently pressed key, to be used within `sampleISR()`
+* `keyArray`, each element within the array is of type `std::atomic<uint8_t>`, stores the current state of the key / encoder matrix
+* `msgInQ`, handled by FreeRTOS, pointer to the next item in the received CAN message queue
 
-* code(currentStepSize), safe access guaranteed using code(std::atomic<uint32_t>)  
-* code(keyArray), each element within the array is of type code(std::atomic<uint8_t>)  
-* msgInQ, handled by FreeRTOS  
-* code(RX_Message), handled by code(std::atomic_flag)  
+It was decided to use C++ `std::atomic`, as it is easier to use and implement, while providing the same functionality as a mutex. According to the documentation: *"Each instantiation and full specialization of the std::atomic template defines an atomic type. If one thread writes to an atomic object while another thread reads from it, the behavior is well-defined (see memory model for details on data races). In addition, accesses to atomic objects may establish inter-thread synchronization and order non-atomic memory accesses as specified by std::memory_order.*" - [CPP Reference "std::atomic"](https://en.cppreference.com/w/cpp/atomic/atomic)
 
-It was desiced to use C++ code(std::atomic), as it is easier to use and implement, while providing the same functionality as a mutex. According to the documentation: *"Each instantiation and full specialization of the std::atomic template defines an atomic type. If one thread writes to an atomic object while another thread reads from it, the behavior is well-defined (see memory model for details on data races). In addition, accesses to atomic objects may establish inter-thread synchronization and order non-atomic memory accesses as specified by std::memory_order.*" - [CPP Reference "std::atomic"](https://en.cppreference.com/w/cpp/atomic/atomic)
+`std::atomic` makes use of atomic builtins within GCC in order to prevent data races from occuring when there are simultaneous accesses of a variable from different threads. The result of wrapping our global variables in `std::atomic<>` is that any access to these variables is always atomic, so data corruption is prevented. In some cases, such as `keyArray`, the array may be partially updated. This is not an issue for data integrity or program operation, as the keyArray update will simply be slightly delayed. This delay is unlikely to be noticable to the user.
 
-TODO - Expand on the memory model for std::atomic.
-
-TODO - Explain how FreeRTOS handles msgInQ.
-
-TODO - Once CAN is completed, expand on the protection of RX_Message
+`msgInQ` is used as a FIFO buffer for CAN messages, to supplement the small buffer of the CAN system and allow for more messages to be retained, increasing the required minimum initiation time.
 
 ## Analysis of inter-task blocking dependencies
+
+## Advanced features
+
+Several advanced features were implemented, including:
+
+* Multiple waveforms
+* User-friendly icons
+* Automatic sender mode configuration using reciever module
+* Finer volume control
+* Storing multiple key presses
+
+### Multiple waveforms
+
+Our system implements several waveforms - sawtooth, triangle, sine, square. Sawtooth was implemented first, by incrementing the step size and waiting for overflow to occur, reseting the waveform. The triangle function was obtained by modifying the sawtooth function. The absolute value of the sawtooth function is taken, shifted to remove the DC offset and doubled to resore the original size. The sine function was implemented using a sine table. Rectangular function was implemented by taking the sign of the sawtooth function.
+
+### User-friendly icons
+
+Using XMB icons, the display was made more user-friednly, containing a volume icon, that is animated to the current volume level. Furthermore, by pressing the knob, this icon is toggled to display the volume as an integer. Finally, several icons are used to display the current waveform.
+
+### Automatic sender mode configuration using receiver module
+
+When one of the keyboards is set to be the receiver, the encoder automatically sets the other keyboards to be CAN senders.
+
+### Finer volume control
+
+A finer volume control method was implemented, allowing the user to set a more accurate volume. The resolution is now set to 20 steps, utilsing some additional algebra.
+
+### Storing multiple key presses
+
+The original code was modified to store multiple keys as the current key. This was achieved by using an array. Currently, only the most recently pressed key is played - however, given the array, this is easily modified to play more than note.
